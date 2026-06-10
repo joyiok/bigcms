@@ -148,7 +148,7 @@ function buildSystemPrompt(user: AuthUser): string {
 8. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。
 9. 外部数据工具(配置状态见下,未就绪时如实告知管理员,不要编造):
 - web_search:Bright Data SERP API,${serpReady ? '已配置' : '未配置(需 API Key + SERP Zone)'}
-- browse_webpage:服务器本地无头 Chrome/Chromium,${browserPath ? `已配置(${browserPath})` : '未配置(需安装 Chromium 并在后台填路径,或设 BROWSER_EXECUTABLE;Docker 镜像默认 /usr/bin/chromium)'}
+- browse_webpage:服务器无头浏览器(Puppeteer),已就绪${browserPath ? `(自定义浏览器路径:${browserPath})` : '(使用内置 Chromium)'}
 - search_companies:企查查 API 886,${qccReady ? '已配置' : '未配置(需 AppKey + SecretKey)'}
 browse_webpage 只用本机浏览器打开 URL 提取正文,不走任何云浏览器服务。
 
@@ -188,7 +188,13 @@ function userSessionDir(userId: number): string {
   return path.join(AGENT_DIR, 'sessions', `user-${userId}`);
 }
 
-async function createEntry(user: AuthUser): Promise<Entry> {
+/** open.fresh:新建空会话;open.path:打开指定会话文件;都不传:续用最近会话 */
+interface OpenOptions {
+  fresh?: boolean;
+  path?: string;
+}
+
+async function createEntry(user: AuthUser, open?: OpenOptions): Promise<Entry> {
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
   const aiConfig = getAiRuntimeConfig();
@@ -220,7 +226,11 @@ async function createEntry(user: AuthUser): Promise<Entry> {
     customTools: buildAssistantTools(user),
     resourceLoader: loader,
     // 续用该用户最近一次会话文件,没有则新建(落盘,跨重启恢复)
-    sessionManager: SessionManager.continueRecent(AGENT_DIR, sessionDir),
+    sessionManager: open?.fresh
+      ? SessionManager.create(AGENT_DIR, sessionDir)
+      : open?.path
+        ? SessionManager.open(open.path, sessionDir)
+        : SessionManager.continueRecent(AGENT_DIR, sessionDir),
     settingsManager,
   });
 
@@ -278,6 +288,84 @@ export async function resetAssistantSession(userId: number): Promise<void> {
   } catch {
     /* 目录不存在等情况忽略 */
   }
+}
+
+export interface AssistantSessionInfo {
+  id: string;
+  preview: string;
+  messageCount: number;
+  modified: string;
+  current: boolean;
+}
+
+/** 列出某用户的全部历史会话(按最近修改倒序,过滤空会话) */
+export async function listAssistantSessions(user: AuthUser): Promise<AssistantSessionInfo[]> {
+  const list = await SessionManager.list(AGENT_DIR, userSessionDir(user.id));
+  let currentId: string | undefined;
+  const pending = sessions.get(user.id);
+  if (pending) {
+    try {
+      currentId = (await pending).session.sessionManager.getSessionId();
+    } catch {
+      /* 创建失败则没有当前会话 */
+    }
+  }
+  return list
+    .filter((s) => s.messageCount > 0 || s.id === currentId)
+    .sort((a, b) => b.modified.getTime() - a.modified.getTime())
+    .map((s) => ({
+      id: s.id,
+      preview: (s.firstMessage || '(新对话)').slice(0, 60),
+      messageCount: s.messageCount,
+      modified: s.modified.toISOString(),
+      current: s.id === currentId,
+    }));
+}
+
+async function disposeCurrent(userId: number): Promise<void> {
+  const pending = sessions.get(userId);
+  sessions.delete(userId);
+  if (pending) {
+    try {
+      const { session } = await pending;
+      if (session.isStreaming) await session.abort();
+      session.dispose();
+    } catch {
+      /* 创建失败无需清理 */
+    }
+  }
+}
+
+/** 切换会话:fresh=true 新建,否则打开 sessionId 对应的会话文件 */
+export async function switchAssistantSession(user: AuthUser, opts: { fresh?: boolean; sessionId?: string }): Promise<Entry> {
+  let path: string | undefined;
+  if (!opts.fresh) {
+    const list = await SessionManager.list(AGENT_DIR, userSessionDir(user.id));
+    path = list.find((s) => s.id === opts.sessionId)?.path;
+    if (!path) throw new Error('会话不存在');
+  }
+  await disposeCurrent(user.id);
+  const fresh = createEntry(user, { fresh: opts.fresh, path });
+  fresh.catch(() => sessions.delete(user.id));
+  sessions.set(user.id, fresh);
+  return fresh;
+}
+
+/** 删除单个会话文件;若删的是当前会话,则下次访问自动续用最近的其他会话 */
+export async function deleteAssistantSession(user: AuthUser, sessionId: string): Promise<void> {
+  const list = await SessionManager.list(AGENT_DIR, userSessionDir(user.id));
+  const target = list.find((s) => s.id === sessionId);
+  if (!target) throw new Error('会话不存在');
+  const pending = sessions.get(user.id);
+  if (pending) {
+    try {
+      const entry = await pending;
+      if (entry.session.sessionManager.getSessionId() === sessionId) await disposeCurrent(user.id);
+    } catch {
+      sessions.delete(user.id);
+    }
+  }
+  fs.rmSync(target.path, { force: true });
 }
 
 /** 重置全部用户的 AI 会话。用于管理员更新模型或凭证后让配置立即生效。 */

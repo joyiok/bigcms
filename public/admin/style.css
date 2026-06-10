@@ -273,6 +273,11 @@ td a:hover { color: var(--primary); }
 /* ---- AI 助手 ---- */
 .ai-header-right { display: flex; align-items: center; gap: 12px; }
 .ai-offline { border-color: var(--amber); background: var(--amber-bg); }
+.ai-history { padding: 6px; margin-bottom: 12px; max-height: 320px; overflow-y: auto; }
+.ai-history-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.ai-history-item:hover, .ai-history-item.current { background: var(--primary-tint); }
+.ai-history-main { flex: 1; min-width: 0; }
+.ai-history-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
 .ai-chat {
   display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 380px;
   background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;

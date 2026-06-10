@@ -78,7 +78,15 @@ test('getLocalBrowserPath 从 settings 读取本地浏览器路径', () => {
   db.prepare(`DELETE FROM settings WHERE key = ?`).run('browser_executable_path');
 });
 
-test('browsePage 未配置浏览器时抛出明确错误', async () => {
+test('browsePage 自定义浏览器路径不存在时抛出明确错误', async () => {
   const { browsePage } = await import('../src/brightdata.js');
-  await assert.rejects(() => browsePage({ url: 'https://example.com' }), /网页抓取未配置/);
+  db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(
+    'browser_executable_path',
+    '/nonexistent/chrome'
+  );
+  try {
+    await assert.rejects(() => browsePage({ url: 'https://example.com' }), /本地浏览器路径不存在/);
+  } finally {
+    db.prepare(`DELETE FROM settings WHERE key = ?`).run('browser_executable_path');
+  }
 });

@@ -2,7 +2,13 @@
 import { Router } from 'express';
 import { calculateContextTokens, getLastAssistantUsage } from '@earendil-works/pi-coding-agent';
 import { requireAuth, requireRole } from '../auth.js';
-import { getAssistantEntry, resetAssistantSession } from '../assistant/manager.js';
+import {
+  deleteAssistantSession,
+  getAssistantEntry,
+  listAssistantSessions,
+  resetAssistantSession,
+  switchAssistantSession,
+} from '../assistant/manager.js';
 
 export const assistantRouter = Router();
 
@@ -63,6 +69,45 @@ assistantRouter.get('/history', async (req, res) => {
     res.json({ messages });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 历史会话列表(像聊天软件的会话侧栏) */
+assistantRouter.get('/sessions', async (req, res) => {
+  try {
+    res.json({ sessions: await listAssistantSessions(req.user!) });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 新建对话 */
+assistantRouter.post('/sessions/new', async (req, res) => {
+  try {
+    await switchAssistantSession(req.user!, { fresh: true });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 切换到某个历史会话 */
+assistantRouter.post('/sessions/open', async (req, res) => {
+  try {
+    await switchAssistantSession(req.user!, { sessionId: String(req.body?.id ?? '') });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 删除某个历史会话 */
+assistantRouter.delete('/sessions/:id', async (req, res) => {
+  try {
+    await deleteAssistantSession(req.user!, req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 

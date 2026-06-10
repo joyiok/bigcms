@@ -781,14 +781,14 @@ pages.settings = async () => {
               <header class="settings-group-head settings-group-head-row">
                 <div>
                   <h3>网页抓取</h3>
-                  <p class="settings-group-desc"><code>browse_webpage</code> · 本地无头 Chrome</p>
+                  <p class="settings-group-desc"><code>browse_webpage</code> · Puppeteer 无头浏览器</p>
                 </div>
-                <span class="badge ${s.browser_executable_path ? 'active' : 'disabled'}">${s.browser_executable_path ? '已配置' : '未配置'}</span>
+                <span class="badge active">${s.browser_executable_path ? '自定义路径' : '内置 Chromium'}</span>
               </header>
               <div class="form-grid">
                 <div class="form-row"><label>浏览器路径</label>
                   <input name="browser_executable_path" value="${esc(s.browser_executable_path || '')}" placeholder="/usr/bin/chromium" autocomplete="off">
-                  <p class="field-help">Docker 镜像默认 <code>BROWSER_EXECUTABLE=/usr/bin/chromium</code>,一般无需填写。macOS 示例 <code>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</code>。</p>
+                  <p class="field-help">留空即用 puppeteer 内置 Chromium,无需配置。如需指定其他浏览器,填可执行文件路径,macOS 示例 <code>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</code>。</p>
                 </div>
               </div>
             </section>
@@ -927,9 +927,11 @@ pages.assistant = async () => {
       <h2>AI 助手</h2>
       <div class="ai-header-right">
         ${status.ready ? `<span class="muted small">模型:${esc(status.model.provider)} · ${esc(status.model.name)}</span>` : ''}
-        <button class="btn small" id="ai-reset" ${status.ready ? '' : 'disabled'}>清空会话</button>
+        <button class="btn small" id="ai-new" ${status.ready ? '' : 'disabled'}>新对话</button>
+        <button class="btn small" id="ai-history-btn" ${status.ready ? '' : 'disabled'}>历史记录</button>
       </div>
     </div>
+    <div class="card ai-history" id="ai-history" hidden></div>
     ${status.ready ? '' : `<div class="card ai-offline"><strong>AI 助手未就绪</strong><p class="muted" style="margin-top:6px">${esc(status.error || '')}</p>${state.user.role === 'admin' ? '<p style="margin-top:12px"><a class="btn small" href="#/settings">配置 AI 助手</a></p>' : ''}</div>`}
     <div class="ai-chat">
       <div class="ai-messages" id="ai-messages">
@@ -974,12 +976,43 @@ pages.assistant = async () => {
     }));
   }
 
-  $('#ai-reset').onclick = async () => {
+  $('#ai-new').onclick = async () => {
     if (aiBusy) { toast('AI 正在回复,请稍候', true); return; }
-    if (!(await confirmDialog('确定清空当前会话吗?对话历史将丢失。'))) return;
-    await api('/assistant/reset', { method: 'POST' });
-    toast('会话已清空');
+    await api('/assistant/sessions/new', { method: 'POST' });
     pages.assistant();
+  };
+
+  const historyPanel = $('#ai-history');
+  const renderHistory = async () => {
+    const { sessions } = await api('/assistant/sessions');
+    historyPanel.innerHTML = sessions.length
+      ? sessions.map((s) => `
+        <div class="ai-history-item${s.current ? ' current' : ''}" data-id="${esc(s.id)}">
+          <div class="ai-history-main">
+            <div class="ai-history-preview">${esc(s.preview)}</div>
+            <div class="muted small">${new Date(s.modified).toLocaleString()} · ${s.messageCount} 条${s.current ? ' · 当前' : ''}</div>
+          </div>
+          <button class="btn small danger" data-del="${esc(s.id)}">删除</button>
+        </div>`).join('')
+      : '<p class="muted small" style="margin:8px">暂无历史对话</p>';
+    historyPanel.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async (e) => {
+      e.stopPropagation();
+      if (aiBusy) { toast('AI 正在回复,请稍候', true); return; }
+      if (!(await confirmDialog('确定删除该对话吗?'))) return;
+      await api(`/assistant/sessions/${b.dataset.del}`, { method: 'DELETE' });
+      toast('对话已删除');
+      renderHistory();
+    }));
+    historyPanel.querySelectorAll('.ai-history-item').forEach((item) => (item.onclick = async () => {
+      if (aiBusy) { toast('AI 正在回复,请稍候', true); return; }
+      if (item.classList.contains('current')) { historyPanel.hidden = true; return; }
+      await api('/assistant/sessions/open', { method: 'POST', body: { id: item.dataset.id } });
+      pages.assistant();
+    }));
+  };
+  $('#ai-history-btn').onclick = async () => {
+    historyPanel.hidden = !historyPanel.hidden;
+    if (!historyPanel.hidden) await renderHistory();
   };
 
   const send = async () => {

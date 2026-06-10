@@ -9,17 +9,15 @@ RUN npm run build
 
 FROM node:24-slim
 ENV NODE_ENV=production
-# browse_webpage 本地无头浏览器(Debian chromium 包)
-ENV BROWSER_EXECUTABLE=/usr/bin/chromium
+# puppeteer 自带 Chromium 存放位置(npm ci 时随依赖下载)
+ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 WORKDIR /app
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-    chromium \
-    fonts-liberation \
-    ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# npm 在容器里跑:每次构建都重新安装 puppeteer 及其内置 Chromium;--install-deps 装运行所需系统库
+RUN npm ci --omit=dev \
+  && npx puppeteer browsers install chrome --install-deps \
+  && npm cache clean --force \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/dist ./dist
 COPY public ./public
 # 数据库与上传文件务必挂载持久卷

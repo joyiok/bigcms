@@ -25,7 +25,10 @@ export function isSerpConfigured(cfg: BrightDataConfig = getBrightDataConfig()):
   return Boolean(cfg.apiKey && cfg.serpZone);
 }
 
-/** 后台「本地浏览器路径」或环境变量 BROWSER_EXECUTABLE / CHROME_PATH */
+/**
+ * 自定义浏览器路径(后台「本地浏览器路径」或环境变量 BROWSER_EXECUTABLE / CHROME_PATH)。
+ * 留空时使用 puppeteer 随 npm install 自带的 Chromium,无需配置。
+ */
 export function getLocalBrowserPath(): string | undefined {
   const fromSettings = getSettings().browser_executable_path?.trim();
   if (fromSettings) return fromSettings;
@@ -33,8 +36,9 @@ export function getLocalBrowserPath(): string | undefined {
   return fromEnv || undefined;
 }
 
+/** puppeteer 自带浏览器,始终可用 */
 export function isLocalBrowserConfigured(): boolean {
-  return Boolean(getLocalBrowserPath());
+  return true;
 }
 
 /** @deprecated 使用 isLocalBrowserConfigured */
@@ -161,19 +165,14 @@ async function scrapePage(
   return { title: meta.title, url: meta.url, text };
 }
 
-/** 通过本机无头 Chrome/Chromium 渲染并抓取页面正文 */
+/** 通过无头浏览器渲染并抓取页面正文(默认 puppeteer 自带 Chromium,可在后台配置自定义路径) */
 export async function browsePage(opts: BrowsePageOptions): Promise<{ title: string; url: string; text: string }> {
   const target = parseBrowseUrl(opts.url);
   const executablePath = getLocalBrowserPath();
-  if (!executablePath) {
-    throw new Error(
-      '网页抓取未配置。请在后台「站点设置 → 网页抓取」填写 Chrome/Chromium 路径,或设置环境变量 BROWSER_EXECUTABLE(Docker 镜像默认 /usr/bin/chromium)。'
-    );
-  }
-  assertLocalBrowserExists(executablePath);
-  const { default: puppeteer } = await import('puppeteer-core');
+  if (executablePath) assertLocalBrowserExists(executablePath);
+  const { default: puppeteer } = await import('puppeteer');
   const browser = await puppeteer.launch({
-    executablePath,
+    ...(executablePath ? { executablePath } : {}),
     headless: true,
     args: LOCAL_BROWSER_ARGS,
   });

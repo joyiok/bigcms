@@ -97,7 +97,7 @@ docker run -d -p 3000:3000 \
 
 ### 外部数据工具(可选)
 
-- `browse_webpage` — 服务器本地无头 Chrome/Chromium 打开 URL 并提取正文。在「站点设置 → 网页抓取」填写浏览器路径,或设环境变量 `BROWSER_EXECUTABLE`(Docker 镜像默认 `/usr/bin/chromium`)。
+- `browse_webpage` — 服务器无头浏览器打开 URL 并提取正文。默认使用 puppeteer 随 `npm install` 自带的 Chromium,开箱即用;如需指定其他浏览器,可在「站点设置 → 网页抓取」填路径或设环境变量 `BROWSER_EXECUTABLE`。
 - `web_search` — 在「站点设置 → Bright Data」配置 [SERP API](https://docs.brightdata.com/scraping-automation/serp-api/introduction) 后,获取 Google/Bing 等结构化搜索结果(`parsed_light` 默认返回前 10 条有机结果)。
 
 示例:「打开这个链接总结正文」/「搜一下竞品最近的新闻」。
