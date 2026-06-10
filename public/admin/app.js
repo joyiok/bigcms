@@ -795,6 +795,25 @@ pages.settings = async () => {
             <section class="card settings-group integration-card">
               <header class="settings-group-head settings-group-head-row">
                 <div>
+                  <h3>线索提醒</h3>
+                  <p class="settings-group-desc">逾期/待跟进线索每日推送 · 钉钉/企业微信群机器人</p>
+                </div>
+                <span class="badge ${s.lead_reminder_webhook ? 'active' : 'disabled'}">${s.lead_reminder_webhook ? '已配置' : '未配置'}</span>
+              </header>
+              <div class="form-grid">
+                <div class="form-row"><label>Webhook 地址</label>
+                  <input name="lead_reminder_webhook" value="${esc(s.lead_reminder_webhook || '')}" placeholder="https://oapi.dingtalk.com/robot/send?access_token=…" autocomplete="off">
+                  <p class="field-help">钉钉/企业微信群机器人的 webhook URL,留空关闭提醒。钉钉机器人若启用关键词校验,可把关键词设为 <code>BigCMS</code>。</p>
+                </div>
+                <div class="form-row"><label>每日发送时刻</label>
+                  <input name="lead_reminder_hour" value="${esc(s.lead_reminder_hour || '')}" placeholder="9" autocomplete="off">
+                  <p class="field-help">0-23 的整数,默认 9(服务器时区);有逾期或待跟进线索时才发送。</p>
+                </div>
+              </div>
+            </section>
+            <section class="card settings-group integration-card">
+              <header class="settings-group-head settings-group-head-row">
+                <div>
                   <h3>Bright Data</h3>
                   <p class="settings-group-desc"><code>web_search</code> · SERP API</p>
                 </div>
@@ -922,10 +941,16 @@ function aiRenderParts(el, parts, typing = false) {
 
 pages.assistant = async () => {
   const status = await api('/assistant/status');
+  const usage = await api('/assistant/usage').catch(() => null);
+  const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
+  const usageText = usage && usage.month.turns
+    ? `本月 ${fmtTok(usage.month.tokens)} tokens · $${usage.month.cost.toFixed(usage.month.cost < 1 ? 3 : 2)}`
+    : '';
   $('#main').innerHTML = `
     <div class="page-header">
       <h2>AI 助手</h2>
       <div class="ai-header-right">
+        ${usageText ? `<span class="muted small" title="今日 ${fmtTok(usage.today.tokens)} tokens · $${usage.today.cost.toFixed(3)}(${usage.today.turns} 轮)">${usageText}</span>` : ''}
         ${status.ready ? `<span class="muted small">模型:${esc(status.model.provider)} · ${esc(status.model.name)}</span>` : ''}
         <button class="btn small" id="ai-new" ${status.ready ? '' : 'disabled'}>新对话</button>
         <button class="btn small" id="ai-history-btn" ${status.ready ? '' : 'disabled'}>历史记录</button>

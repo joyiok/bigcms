@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { calculateContextTokens, getLastAssistantUsage } from '@earendil-works/pi-coding-agent';
 import { requireAuth, requireRole } from '../auth.js';
+import { db } from '../db.js';
 import {
   deleteAssistantSession,
   getAssistantEntry,
@@ -38,6 +39,15 @@ assistantRouter.get('/status', async (req, res) => {
   } catch (err) {
     res.json({ ready: false, error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+/** AI 用量统计:今日 / 本月 token 与成本 */
+assistantRouter.get('/usage', (_req, res) => {
+  const sum = (since: string) =>
+    db
+      .prepare(`SELECT COALESCE(SUM(tokens), 0) AS tokens, COALESCE(SUM(cost), 0) AS cost, COUNT(*) AS turns FROM ai_usage WHERE created_at >= ${since}`)
+      .get() as { tokens: number; cost: number; turns: number };
+  res.json({ today: sum(`date('now')`), month: sum(`date('now', 'start of month')`) });
 });
 
 /** 对话历史(供前端重新进入页面时恢复) */
@@ -221,6 +231,10 @@ assistantRouter.post('/chat', async (req, res) => {
         tokens += m.usage.totalTokens ?? 0;
         cost += m.usage.cost?.total ?? 0;
       }
+    }
+    // 记账:用量入库,供「本月 AI 花费」统计
+    if (tokens) {
+      db.prepare(`INSERT INTO ai_usage (user_id, tokens, cost) VALUES (?, ?, ?)`).run(req.user!.id, tokens, cost);
     }
     // 上下文水位:当前会话占模型窗口的比例,供前端展示
     let context = 0;
