@@ -4,19 +4,24 @@
 
 ## 功能
 
-- **前台站点**(`/`):企业官网 + 新闻中心,服务端渲染(SEO 友好),含首页、文章列表(分类筛选/分页)、文章详情(Markdown 渲染)
-- **文章管理**:Markdown 正文、草稿/发布/归档状态、分类、多标签、封面图、搜索与分页
+- **前台站点**(`/`):企业官网 + 新闻中心,服务端渲染(SEO 友好),含首页、文章列表(分类/标签筛选、关键词搜索、分页)、文章详情(Markdown 渲染、上一篇/下一篇、相关阅读、可点击标签)
+- **SEO 配套**:RSS 订阅(`/feed.xml`)、站点地图(`/sitemap.xml`)、`robots.txt`、Open Graph 元标签、自定义 404 页
+- **文章管理**:Markdown 正文(实时预览)、草稿/发布/归档状态、**定时发布**(到点自动上线)、分类、多标签、封面图(可从媒体库选取)、搜索与状态/分类筛选、分页
+- **全文检索**:SQLite FTS5(trigram 分词)索引标题/摘要/正文,前后台与公开 API 共用;环境不支持时自动回退 LIKE
+- **修订历史**:文章每次保存前自动快照(每篇保留 20 版),后台与 AI 助手均可一键恢复
 - **分类 / 标签**:层级分类、文章计数、防误删保护
-- **媒体库**:文件上传(图片/PDF/视频等,20MB 上限)、类型白名单、链接复制
+- **媒体库**:文件上传(图片/PDF/视频等,20MB 上限,支持多选)、自动生成 WebP 缩略图(sharp,不可用时自动降级)、类型白名单、链接复制、编辑器内一键插图
 - **用户与权限(RBAC)**:管理员 / 编辑 / 只读三种角色,账号禁用,密码 scrypt 加盐哈希
 - **站点设置**:站点名称、描述、关键词、ICP 备案号
-- **审计日志**:登录与全部增删改操作留痕
+- **审计日志**:登录(含失败)与全部增删改操作留痕,支持按用户/操作类型/关键词筛选
 - **仪表盘**:内容统计、最近更新、最近操作
-- **公开内容 API**:无需登录,供前台站点拉取已发布文章(自动浏览量统计)
+- **公开内容 API**:无需登录,供前台站点拉取已发布文章(支持分类/标签/搜索参数,自动浏览量统计)
 - **管理后台**(`/admin/`):内置中文 Web 管理界面(原生 JS,无前端构建步骤)
-- **AI 助手**:基于 [Pi](https://pi.dev/) SDK 的对话式运营助手,自然语言管理全站信息(写稿/发布/分类标签/设置/用户),操作全部留痕审计
+- **AI 助手**:基于 [Pi](https://pi.dev/) SDK 的对话式运营助手,自然语言管理全站信息(写稿/定时发布/分类标签/设置/用户/恢复修订),会话落盘跨重启恢复,操作全部留痕审计
+- **安全**:Markdown 渲染消毒(原始 HTML 转义、危险协议拦截)、登录限速(15 分钟 10 次失败)、CSP 等安全响应头、上传文件沙箱化伺服、JWT 过期与账号状态校验
+- **工程化**:API 集成测试(`npm test`)、热备份脚本(`npm run backup`)、Dockerfile
 
-设计系统见 `DESIGN.md`(示波器荧光绿 + 哑光黑,OKLCH 色彩)。
+设计系统见 `DESIGN.md`(白底 + 深青绿,OKLCH 色彩)。
 
 ## 快速开始
 
@@ -27,6 +32,19 @@ npm install
 npm run dev        # 开发模式(热重载)
 # 或
 npm run build && npm start   # 生产模式
+
+npm test           # API 集成测试(独立临时数据库,不碰本地数据)
+npm run backup     # 热备份数据库到 data/backups/(uploads/ 请一并备份)
+```
+
+Docker 部署:
+
+```bash
+docker build -t bigcms .
+docker run -d -p 3000:3000 \
+  -e JWT_SECRET=请改成随机长串 -e DEEPSEEK_API_KEY=sk-xxx \
+  -v bigcms-data:/app/data -v bigcms-uploads:/app/uploads \
+  bigcms
 ```
 
 - 前台站点:<http://localhost:3000>
@@ -47,22 +65,34 @@ npm run build && npm start   # 生产模式
 | `JWT_SECRET` | 开发用默认值 | JWT 签名密钥(生产必改) |
 | `DATA_DIR` | `./data` | SQLite 数据库目录 |
 | `UPLOAD_DIR` | `./uploads` | 上传文件目录 |
-| `ANTHROPIC_API_KEY` 等 | - | AI 助手模型凭证(任一 Pi 支持的提供商;也可复用 pi CLI 登录的 `~/.pi/agent/auth.json`) |
-| `AI_PROVIDER` / `AI_MODEL` | 自动选择 | 指定 AI 助手使用的模型,如 `anthropic` + `claude-opus-4-5` |
+| `DEEPSEEK_API_KEY` | - | **推荐**:DeepSeek 官方 API 密钥(`api.deepseek.com`),设置后自动选用 `deepseek-v4-flash` |
+| `ANTHROPIC_API_KEY` 等 | - | 其他模型提供商凭证(任一 Pi 支持的提供商;也可复用 pi CLI 登录的 `~/.pi/agent/auth.json`) |
+| `AI_PROVIDER` / `AI_MODEL` | 自动选择 | 指定 AI 助手使用的模型,如 `deepseek` + `deepseek-v4-pro`;只设 `AI_MODEL` 时自动在可用提供商中匹配 |
+| `AI_THINKING` | `off` | AI 助手思考强度:`off` / `minimal` / `low` / `medium` / `high` / `xhigh`(DeepSeek 上有效档位为 `high` / `xhigh`,对应官方 thinking high / max) |
 
 ## AI 助手
 
 管理后台「AI 助手」页面内置一个由 [Pi](https://pi.dev/) 驱动的对话式 agent,可用自然语言完成全部内容运营:
 
 - “写一篇产品 2.0 发布公告,放进产品发布分类,打上技术标签,直接发布”
-- “把最近的草稿都列出来” / “把 ID 为 3 的文章转回草稿”
+- “把最近的草稿都列出来” / “把所有草稿都发布”(批量操作,执行前会让你确认)
 - “站点描述改成 ××”(管理员)/ “新建一个编辑账号给小王”(管理员)
 
-说明:
+### DeepSeek 官方 API(推荐)
 
-- 凭证:设置任一模型提供商的环境变量(如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`),或在本机用 pi CLI 登录过即可;可用 `AI_PROVIDER`/`AI_MODEL` 锁定具体模型
-- 权限:编辑及以上可用;站点设置、用户管理等工具仅管理员会话可见;只读账号不可用
-- 安全:agent 只能调用内置的 CMS 工具(无 shell/文件访问);删除类操作会先向你确认;所有写操作以 `ai:` 前缀写入审计日志
+按 [DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/) 做了重点适配:
+
+- 设置 `DEEPSEEK_API_KEY` 即直连 `api.deepseek.com`,无需其他配置,默认选用 `deepseek-v4-flash`(1M 上下文,支持 Tool Calls / JSON Output,并发高、成本低);需要更强推理可设 `AI_MODEL=deepseek-v4-pro`
+- 兼容旧模型名:`AI_MODEL` 填 `deepseek-chat` / `deepseek-reasoner`(官方 2026/07/24 弃用)会自动映射到 `deepseek-v4-flash`,其中 `deepseek-reasoner` 自动开启思考模式,启动日志会提示迁移
+- 思考模式:`AI_THINKING=high` / `xhigh` 分别对应 DeepSeek 官方 thinking 的 high / max 档
+- 多个提供商同时可用时,优先选择 DeepSeek 官方 API
+
+其他说明:
+
+- 凭证:也可设置其他提供商的环境变量(如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`),或在本机用 pi CLI 登录过即可;可用 `AI_PROVIDER`/`AI_MODEL` 锁定具体模型,`AI_THINKING` 调思考强度
+- 权限:编辑及以上可用;站点设置、用户管理、审计日志等工具仅管理员会话可见;只读账号不可用
+- 安全:agent 只能调用内置的 CMS 工具(无 shell/文件访问);删除与批量操作会先向你确认;所有写操作以 `ai:` 前缀写入审计日志
+- 体验:工具调用实时显示(悬停可看参数);回复过程中可随时点「停止」;每轮回复后显示 token 用量与成本;会话上下文带有当天日期与站点信息
 
 ## API 概览
 
@@ -74,18 +104,23 @@ npm run build && npm start   # 生产模式
 | GET | `/api/auth/me` | 登录 | 当前用户信息 |
 | PUT | `/api/auth/password` | 登录 | 修改自己的密码 |
 | GET/POST/PUT/DELETE | `/api/articles` | 登录 / 编辑 | 文章 CRUD(支持 `?page&status&q&category_id`) |
+| POST | `/api/articles/preview` | 编辑 | Markdown 渲染预览(与前台同一渲染器,含消毒) |
+| GET | `/api/articles/:id/revisions` | 登录 | 修订历史列表 |
+| POST | `/api/articles/:id/revisions/:revId/restore` | 编辑 | 恢复到指定修订版本 |
 | GET/POST/PUT/DELETE | `/api/categories` | 登录 / 编辑 | 分类 CRUD |
 | GET/POST/DELETE | `/api/tags` | 登录 / 编辑 | 标签管理 |
 | GET/POST/DELETE | `/api/media` | 登录 / 编辑 | 媒体库(`multipart/form-data`,字段名 `file`) |
 | GET/POST/PUT/DELETE | `/api/users` | 管理员 | 用户管理 |
 | GET/PUT | `/api/settings` | 登录 / 管理员 | 站点设置 |
 | GET | `/api/dashboard/stats` | 登录 | 仪表盘统计 |
-| GET | `/api/audit-logs` | 管理员 | 审计日志 |
+| GET | `/api/audit-logs` | 管理员 | 审计日志(支持 `?action&username&q`) |
 | GET | `/api/assistant/status` | 编辑 | AI 助手可用性与当前模型 |
 | POST | `/api/assistant/chat` | 编辑 | 发送消息,SSE 流式返回 |
 | GET | `/api/assistant/history` | 编辑 | 当前会话历史 |
 | POST | `/api/assistant/reset` | 编辑 | 清空当前会话 |
-| GET | `/api/public/articles` | 公开 | 已发布文章列表(`?page&category`) |
+| POST | `/api/assistant/abort` | 编辑 | 中止正在生成的回复 |
+| GET | `/api/public/articles` | 公开 | 已发布文章列表(`?page&category&tag&q`) |
+| GET | `/feed.xml` / `/sitemap.xml` / `/robots.txt` | 公开 | RSS 订阅 / 站点地图 / 爬虫规则 |
 | GET | `/api/public/articles/:slug` | 公开 | 文章详情(含标签,自动 +1 浏览量) |
 | GET | `/api/public/site` | 公开 | 站点公开设置 |
 
@@ -93,9 +128,12 @@ npm run build && npm start   # 生产模式
 
 ```
 src/
-  index.ts        # 服务入口与中间件装配
+  index.ts        # 服务入口(监听 + 定时任务)
+  app.ts          # Express 应用装配(路由、安全响应头;测试直接挂载)
+  scheduler.ts    # 定时发布轮询
+  markdown.ts     # Markdown 消毒渲染(前台与预览共用)
   config.ts       # 配置(端口、密钥、目录)
-  db.ts           # SQLite 建表与初始数据
+  db.ts           # SQLite 建表/迁移、FTS5 索引、修订快照、初始数据
   auth.ts         # JWT 认证、角色门槛、审计写入
   password.ts     # scrypt 密码哈希
   slug.ts         # slug 生成
@@ -115,7 +153,10 @@ public/
   site.css        # 前台样式
   scope.js        # 首页 hero 波形动画
   admin/          # 管理后台(原生 JS SPA)
+tests/
+  api.test.ts     # API 集成测试(node:test,独立临时库)
 scripts/
+  backup.mjs      # SQLite 热备份(VACUUM INTO)
   screenshot.mjs  # 视觉验证截图(开发辅助)
 data/             # SQLite 数据库(自动创建,已 gitignore)
 uploads/          # 上传文件(自动创建,已 gitignore)

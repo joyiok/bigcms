@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { db } from '../db.js';
+import { articleSearchCondition, db } from '../db.js';
 import { audit, requireAuth, requireRole } from '../auth.js';
 
 export const settingsRouter = Router();
@@ -49,11 +49,29 @@ dashboardRouter.get('/stats', requireAuth, (_req, res) => {
 auditRouter.get('/', requireAuth, requireRole('admin'), (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 50));
-  const total = (db.prepare(`SELECT COUNT(*) AS c FROM audit_logs`).get() as { c: number }).c;
+  const conditions: string[] = [];
+  const params: string[] = [];
+  if (req.query.action) {
+    conditions.push('action = ?');
+    params.push(String(req.query.action));
+  }
+  if (req.query.username) {
+    conditions.push('username = ?');
+    params.push(String(req.query.username));
+  }
+  if (req.query.q) {
+    conditions.push('(target LIKE ? OR detail LIKE ?)');
+    const kw = `%${req.query.q}%`;
+    params.push(kw, kw);
+  }
+  const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const total = (db.prepare(`SELECT COUNT(*) AS c FROM audit_logs${where}`).get(...params) as { c: number }).c;
   const items = db
-    .prepare(`SELECT * FROM audit_logs ORDER BY id DESC LIMIT ? OFFSET ?`)
-    .all(pageSize, (page - 1) * pageSize);
-  res.json({ items, total, page, page_size: pageSize });
+    .prepare(`SELECT * FROM audit_logs${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    .all(...params, pageSize, (page - 1) * pageSize);
+  const actions = (db.prepare(`SELECT DISTINCT action FROM audit_logs ORDER BY action`).all() as { action: string }[]).map((r) => r.action);
+  const usernames = (db.prepare(`SELECT DISTINCT username FROM audit_logs WHERE username != '' ORDER BY username`).all() as { username: string }[]).map((r) => r.username);
+  res.json({ items, total, page, page_size: pageSize, actions, usernames });
 });
 
 // ---- 公开内容 API(无需登录,供前台站点调用) ----
@@ -65,6 +83,15 @@ publicRouter.get('/articles', (req, res) => {
   if (req.query.category) {
     conditions.push('c.slug = ?');
     params.push(String(req.query.category));
+  }
+  if (req.query.tag) {
+    conditions.push('EXISTS (SELECT 1 FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = a.id AND t.slug = ?)');
+    params.push(String(req.query.tag));
+  }
+  if (req.query.q) {
+    const search = articleSearchCondition(String(req.query.q).slice(0, 100));
+    conditions.push(search.sql);
+    params.push(...search.params);
   }
   const where = ` WHERE ${conditions.join(' AND ')}`;
   const total = (

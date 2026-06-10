@@ -11,6 +11,7 @@ import {
   type AgentSession,
 } from '@earendil-works/pi-coding-agent';
 import { config } from '../config.js';
+import { db } from '../db.js';
 import type { AuthUser } from '../auth.js';
 import { buildAssistantTools } from './tools.js';
 
@@ -28,43 +29,87 @@ export interface AssistantModelInfo {
   name: string;
 }
 
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/**
+ * DeepSeek 官方旧模型名映射(api-docs.deepseek.com,旧名 2026/07/24 弃用):
+ * deepseek-chat → deepseek-v4-flash 非思考模式;deepseek-reasoner → deepseek-v4-flash 思考模式。
+ */
+const DEEPSEEK_LEGACY_MODELS: Record<string, { id: string; thinking?: ThinkingLevel }> = {
+  'deepseek-chat': { id: 'deepseek-v4-flash' },
+  'deepseek-reasoner': { id: 'deepseek-v4-flash', thinking: 'high' },
+};
+
 async function resolveModel() {
   const provider = process.env.AI_PROVIDER;
-  const modelId = process.env.AI_MODEL;
+  let modelId = process.env.AI_MODEL;
+  let defaultThinking: ThinkingLevel | undefined;
+
+  if (modelId && (!provider || provider === 'deepseek')) {
+    const legacy = DEEPSEEK_LEGACY_MODELS[modelId];
+    if (legacy) {
+      console.warn(`[assistant] DeepSeek 旧模型名 ${modelId} 将于 2026-07-24 弃用,已自动映射到 ${legacy.id}`);
+      modelId = legacy.id;
+      defaultThinking = legacy.thinking;
+    }
+  }
+
   if (provider && modelId) {
     const model = modelRegistry.find(provider, modelId);
     if (!model) throw new Error(`未找到模型 ${provider}/${modelId},请检查 AI_PROVIDER / AI_MODEL 环境变量`);
-    return model;
+    return { model, defaultThinking };
   }
+
   const available = await modelRegistry.getAvailable();
   if (available.length === 0) {
     throw new Error(
-      '未配置任何 AI 模型凭证。请设置环境变量(如 ANTHROPIC_API_KEY / OPENAI_API_KEY),' +
+      '未配置任何 AI 模型凭证。请设置环境变量(如 DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY),' +
         '或先用 pi CLI 登录(凭证存于 ~/.pi/agent/auth.json),然后重启服务。' +
         '可选用 AI_PROVIDER + AI_MODEL 指定模型。'
     );
   }
-  return available[0]!;
+
+  // 只指定了 AI_MODEL:在可用提供商中找,官方 deepseek 优先
+  if (modelId) {
+    const matches = available.filter((m) => m.id === modelId);
+    const model = matches.find((m) => m.provider === 'deepseek') ?? matches[0];
+    if (!model) throw new Error(`已配置的提供商中没有模型 ${modelId},可补充 AI_PROVIDER 指定来源`);
+    return { model, defaultThinking };
+  }
+
+  // 未指定模型:优先 DeepSeek 官方 API(api.deepseek.com),默认 V4 Flash(快、便宜、支持工具调用)
+  const deepseek = available.filter((m) => m.provider === 'deepseek');
+  const model = deepseek.find((m) => m.id === 'deepseek-v4-flash') ?? deepseek[0] ?? available[0]!;
+  return { model, defaultThinking };
 }
 
 function buildSystemPrompt(user: AuthUser): string {
   const roleText = { admin: '管理员', editor: '编辑', viewer: '只读' }[user.role];
+  const settings = Object.fromEntries(
+    (db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[]).map((r) => [r.key, r.value])
+  );
+  const today = new Date().toISOString().slice(0, 10);
   return `你是 BigCMS 企业内容管理系统的 AI 运营助手,通过提供给你的工具管理企业官网的全部信息。
 
+今天是 ${today}。
+站点名称:${settings.site_name || 'BigCMS'};站点描述:${settings.site_description || '(未设置)'}。
 当前操作者:${user.display_name || user.username}(角色:${roleText})。你的所有操作都会以该用户身份写入审计日志。
 
 站点结构:
 - 前台官网(/):企业首页 + 新闻中心,展示「已发布」状态的文章
+- 已发布文章的前台地址为 /news/<slug>;新闻中心支持按分类(/news?category=<slug>)、标签(/news?tag=<slug>)和关键词(/news?q=)筛选;RSS 在 /feed.xml
 - 管理后台(/admin):文章、分类、标签、媒体库、用户、站点设置、审计日志
 
 工作准则:
-1. 用简体中文回复,简洁直接;操作完成后简要说明做了什么,并给出关键信息(如文章 ID、slug)。
-2. 写文章正文用 Markdown;创建文章默认存为草稿(draft),除非用户明确要求直接发布(published)。
-3. 任何删除操作(文章/分类/标签/用户)以及批量修改前,必须先向用户复述将要执行的操作并得到明确确认,确认后才能调用删除工具。
+1. 用简体中文回复,简洁直接;操作完成后简要说明做了什么,并给出关键信息(如文章 ID、slug、前台链接)。
+2. 写文章正文用 Markdown;创建文章默认存为草稿(draft),除非用户明确要求直接发布(published)。用户要求"明天早上发"之类的未来时间时,用 scheduled_at 设定时发布(结合上文的今天日期推算,注意带时区)。
+3. 任何删除操作(文章/分类/标签/媒体/用户)以及批量修改(bulk_update_articles)前,必须先向用户列出将受影响的对象并得到明确确认,确认后才能执行。
 4. 修改前先查:更新或删除之前,先用查询工具确认目标存在、拿到准确 ID,不要凭空猜测 ID。
-5. 不确定用户意图时先提问澄清,不要擅自行动。
-6. 权限受限时(工具不存在或报错「仅管理员」),如实告知用户当前角色无权限。
-7. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。`;
+5. 多篇文章做同样的状态/分类变更时,优先用 bulk_update_articles 一次完成,而不是逐篇调用 update_article。
+6. 不确定用户意图时先提问澄清,不要擅自行动。
+7. 权限受限时(工具不存在或报错「仅管理员」),如实告知用户当前角色无权限。
+8. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。`;
 }
 
 interface Entry {
@@ -74,9 +119,16 @@ interface Entry {
 
 const sessions = new Map<number, Promise<Entry>>();
 
+/** 每个用户独立的会话落盘目录(跨服务重启恢复对话) */
+function userSessionDir(userId: number): string {
+  return path.join(AGENT_DIR, 'sessions', `user-${userId}`);
+}
+
 async function createEntry(user: AuthUser): Promise<Entry> {
-  const model = await resolveModel();
+  const { model, defaultThinking } = await resolveModel();
   const settingsManager = SettingsManager.inMemory({});
+  const sessionDir = userSessionDir(user.id);
+  fs.mkdirSync(sessionDir, { recursive: true });
   const loader = new DefaultResourceLoader({
     cwd: AGENT_DIR,
     agentDir: AGENT_DIR,
@@ -90,17 +142,19 @@ async function createEntry(user: AuthUser): Promise<Entry> {
   });
   await loader.reload();
 
+  const envThinking = process.env.AI_THINKING as ThinkingLevel | undefined;
   const { session } = await createAgentSession({
     cwd: AGENT_DIR,
     agentDir: AGENT_DIR,
     model,
-    thinkingLevel: 'off',
+    thinkingLevel: envThinking && THINKING_LEVELS.includes(envThinking) ? envThinking : (defaultThinking ?? 'off'),
     authStorage,
     modelRegistry,
     noTools: 'builtin',
     customTools: buildAssistantTools(user),
     resourceLoader: loader,
-    sessionManager: SessionManager.inMemory(AGENT_DIR),
+    // 续用该用户最近一次会话文件,没有则新建(落盘,跨重启恢复)
+    sessionManager: SessionManager.continueRecent(AGENT_DIR, sessionDir),
     settingsManager,
   });
 
@@ -122,7 +176,7 @@ export function getAssistantEntry(user: AuthUser): Promise<Entry> {
   return entry;
 }
 
-/** 重置某用户的会话(清空对话历史) */
+/** 重置某用户的会话(清空对话历史,含落盘文件) */
 export async function resetAssistantSession(userId: number): Promise<void> {
   const pending = sessions.get(userId);
   sessions.delete(userId);
@@ -134,5 +188,10 @@ export async function resetAssistantSession(userId: number): Promise<void> {
     } catch {
       // 创建本来就失败了,无需清理
     }
+  }
+  try {
+    fs.rmSync(userSessionDir(userId), { recursive: true, force: true });
+  } catch {
+    /* 目录不存在等情况忽略 */
   }
 }

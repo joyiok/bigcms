@@ -1,7 +1,10 @@
 /** AI 助手可调用的 CMS 管理工具(基于 Pi SDK 的自定义工具) */
+import fs from 'node:fs';
+import path from 'node:path';
 import { Type } from 'typebox';
 import { defineTool, type ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { db } from '../db.js';
+import { config } from '../config.js';
+import { articleSearchCondition, db, snapshotArticle, toUtcDateTime } from '../db.js';
 import { slugify } from '../slug.js';
 import { hashPassword } from '../password.js';
 import type { AuthUser } from '../auth.js';
@@ -26,7 +29,7 @@ const ARTICLE_LIST_SQL = `
   SELECT a.id, a.title, a.slug, a.summary, a.status, a.views, a.cover_image,
          a.category_id, c.name AS category_name,
          a.author_id, u.display_name AS author_name,
-         a.published_at, a.created_at, a.updated_at
+         a.published_at, a.scheduled_at, a.created_at, a.updated_at
   FROM articles a
   LEFT JOIN categories c ON c.id = a.category_id
   LEFT JOIN users u ON u.id = a.author_id`;
@@ -93,13 +96,14 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
     defineTool({
       name: 'list_articles',
       label: '文章列表',
-      description: '分页查询文章列表,支持按状态(draft/published/archived)、分类 ID、关键词筛选。',
+      description: '分页查询文章列表,支持按状态(draft/published/archived)、分类 ID、标签名、关键词筛选。',
       parameters: Type.Object({
         page: Type.Optional(Type.Number({ description: '页码,默认 1' })),
         page_size: Type.Optional(Type.Number({ description: '每页条数,默认 10,最大 100' })),
         status: Type.Optional(Type.String({ description: '状态:draft / published / archived' })),
         category_id: Type.Optional(Type.Number({ description: '分类 ID' })),
-        q: Type.Optional(Type.String({ description: '标题/摘要关键词' })),
+        tag: Type.Optional(Type.String({ description: '标签名或标签 slug' })),
+        q: Type.Optional(Type.String({ description: '关键词(标题/摘要/正文全文检索)' })),
       }),
       execute: async (_id, p) => {
         const page = Math.max(1, p.page ?? 1);
@@ -114,9 +118,16 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           conditions.push('a.category_id = ?');
           params.push(p.category_id);
         }
+        if (p.tag) {
+          conditions.push(
+            'EXISTS (SELECT 1 FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = a.id AND (t.name = ? OR t.slug = ?))'
+          );
+          params.push(p.tag, p.tag);
+        }
         if (p.q) {
-          conditions.push('(a.title LIKE ? OR a.summary LIKE ?)');
-          params.push(`%${p.q}%`, `%${p.q}%`);
+          const search = articleSearchCondition(p.q);
+          conditions.push(search.sql);
+          params.push(...search.params);
         }
         const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
         const total = (db.prepare(`SELECT COUNT(*) AS c FROM articles a${where}`).get(...params) as { c: number }).c;
@@ -164,6 +175,9 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         status: Type.Optional(Type.String({ description: 'draft / published / archived,默认 draft' })),
         category_id: Type.Optional(Type.Number({ description: '分类 ID' })),
         tags: Type.Optional(Type.Array(Type.String(), { description: '标签名数组' })),
+        scheduled_at: Type.Optional(
+          Type.String({ description: '定时发布时间,ISO 8601(如 2026-06-12T09:00:00+08:00);仅草稿生效,到点自动发布' })
+        ),
       }),
       execute: async (_id, p) => {
         const status = p.status ?? 'draft';
@@ -172,13 +186,14 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           const cat = db.prepare(`SELECT id FROM categories WHERE id = ?`).get(p.category_id);
           if (!cat) throw new Error(`分类 ${p.category_id} 不存在,可先用 list_categories 查看`);
         }
+        const scheduledAt = status === 'draft' ? toUtcDateTime(p.scheduled_at) : null;
         const finalSlug = p.slug ? slugify(p.slug) : slugify(p.title);
         let id: number;
         try {
           id = db
             .prepare(
-              `INSERT INTO articles (title, slug, summary, content, cover_image, status, category_id, author_id, published_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)`
+              `INSERT INTO articles (title, slug, summary, content, cover_image, status, category_id, author_id, published_at, scheduled_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END, ?)`
             )
             .run(
               p.title,
@@ -189,7 +204,8 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
               status,
               p.category_id ?? null,
               user.id,
-              status
+              status,
+              scheduledAt
             ).lastInsertRowid as number;
         } catch {
           throw new Error(`slug "${finalSlug}" 已存在,请换一个`);
@@ -214,6 +230,9 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         status: Type.Optional(Type.String({ description: 'draft / published / archived' })),
         category_id: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: '分类 ID,null 表示移除分类' })),
         tags: Type.Optional(Type.Array(Type.String(), { description: '标签名数组(整体替换)' })),
+        scheduled_at: Type.Optional(
+          Type.Union([Type.String(), Type.Null()], { description: '定时发布时间,ISO 8601;仅草稿生效,null 取消定时' })
+        ),
       }),
       execute: async (_id, p) => {
         const existing = db.prepare(`SELECT id, status, category_id FROM articles WHERE id = ?`).get(p.id) as
@@ -221,6 +240,10 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           | undefined;
         if (!existing) throw new Error('文章不存在');
         if (p.status && !STATUS_VALUES.includes(p.status)) throw new Error('状态无效');
+        const finalStatus = p.status ?? existing.status;
+        const setScheduled = p.scheduled_at !== undefined || finalStatus !== 'draft';
+        const scheduledAt = p.scheduled_at !== undefined && finalStatus === 'draft' ? toUtcDateTime(p.scheduled_at) : null;
+        snapshotArticle(p.id, `${user.username}(AI)`);
         try {
           db.prepare(
             `UPDATE articles SET
@@ -231,6 +254,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
                cover_image = COALESCE(?, cover_image),
                status = COALESCE(?, status),
                category_id = ?,
+               scheduled_at = CASE WHEN ? THEN ? ELSE scheduled_at END,
                published_at = CASE WHEN ? = 'published' AND published_at IS NULL THEN datetime('now') ELSE published_at END,
                updated_at = datetime('now')
              WHERE id = ?`
@@ -242,7 +266,9 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
             p.cover_image ?? null,
             p.status ?? null,
             p.category_id === undefined ? existing.category_id : p.category_id,
-            p.status ?? existing.status,
+            setScheduled ? 1 : 0,
+            scheduledAt,
+            finalStatus,
             p.id
           );
         } catch {
@@ -268,6 +294,117 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         db.prepare(`DELETE FROM articles WHERE id = ?`).run(p.id);
         auditAi(user, 'delete_article', `article:${p.id}`, existing.title);
         return ok({ ok: true, deleted: existing.title });
+      },
+    }),
+    defineTool({
+      name: 'bulk_update_articles',
+      label: '批量更新文章',
+      description:
+        '按 ID 列表批量修改文章的状态和/或分类(如批量发布草稿、批量归档、批量移动分类)。一次最多 50 篇。执行前必须先向用户列出将受影响的文章并得到明确确认。',
+      parameters: Type.Object({
+        ids: Type.Array(Type.Number(), { description: '文章 ID 数组(必填,最多 50 个)' }),
+        status: Type.Optional(Type.String({ description: '统一改为该状态:draft / published / archived' })),
+        category_id: Type.Optional(
+          Type.Union([Type.Number(), Type.Null()], { description: '统一移动到该分类,null 表示移除分类' })
+        ),
+      }),
+      execute: async (_id, p) => {
+        if (!p.ids.length) throw new Error('ids 不能为空');
+        if (p.ids.length > 50) throw new Error('一次最多批量处理 50 篇');
+        if (p.status === undefined && p.category_id === undefined) throw new Error('至少指定 status 或 category_id 之一');
+        if (p.status && !STATUS_VALUES.includes(p.status)) throw new Error('状态无效,必须是 draft / published / archived');
+        if (typeof p.category_id === 'number') {
+          const cat = db.prepare(`SELECT id FROM categories WHERE id = ?`).get(p.category_id);
+          if (!cat) throw new Error(`分类 ${p.category_id} 不存在,可先用 list_categories 查看`);
+        }
+        const update = db.prepare(
+          `UPDATE articles SET
+             status = COALESCE(?, status),
+             category_id = CASE WHEN ? THEN ? ELSE category_id END,
+             published_at = CASE WHEN ? = 'published' AND published_at IS NULL THEN datetime('now') ELSE published_at END,
+             updated_at = datetime('now')
+           WHERE id = ?`
+        );
+        const updated: number[] = [];
+        const missing: number[] = [];
+        for (const rawId of p.ids) {
+          const id = Number(rawId);
+          snapshotArticle(id, `${user.username}(AI)`);
+          const result = update.run(
+            p.status ?? null,
+            p.category_id === undefined ? 0 : 1,
+            p.category_id === undefined ? null : p.category_id,
+            p.status ?? '',
+            id
+          );
+          (result.changes > 0 ? updated : missing).push(id);
+        }
+        auditAi(
+          user,
+          'bulk_update_articles',
+          `articles:${updated.join(',')}`,
+          [p.status && `status→${p.status}`, p.category_id !== undefined && `category→${p.category_id}`].filter(Boolean).join(' ')
+        );
+        return ok({ updated, missing, count: updated.length });
+      },
+    })
+  );
+
+  // ---- 修订历史 ----
+  tools.push(
+    defineTool({
+      name: 'list_article_revisions',
+      label: '修订历史',
+      description: '查看一篇文章的修订历史(每次更新前自动快照,最多保留 20 版)。',
+      parameters: Type.Object({
+        article_id: Type.Number({ description: '文章 ID' }),
+      }),
+      execute: async (_id, p) => {
+        if (!db.prepare(`SELECT id FROM articles WHERE id = ?`).get(p.article_id)) throw new Error('文章不存在');
+        return ok(
+          db
+            .prepare(
+              `SELECT id, title, status, saved_by, created_at, length(content) AS content_length
+               FROM article_revisions WHERE article_id = ? ORDER BY id DESC`
+            )
+            .all(p.article_id)
+        );
+      },
+    }),
+    defineTool({
+      name: 'restore_article_revision',
+      label: '恢复修订版本',
+      description:
+        '把文章恢复到指定修订版本(只还原标题/摘要/正文/封面,不动状态和分类;恢复前会自动快照当前版)。执行前必须得到用户的明确确认。',
+      parameters: Type.Object({
+        article_id: Type.Number({ description: '文章 ID' }),
+        revision_id: Type.Number({ description: '修订版本 ID(可先用 list_article_revisions 查看)' }),
+      }),
+      execute: async (_id, p) => {
+        const revision = db
+          .prepare(`SELECT * FROM article_revisions WHERE id = ? AND article_id = ?`)
+          .get(p.revision_id, p.article_id) as
+          | { id: number; title: string; slug: string; summary: string; content: string; cover_image: string }
+          | undefined;
+        if (!revision) throw new Error('修订版本不存在,可先用 list_article_revisions 查看');
+        snapshotArticle(p.article_id, `${user.username}(AI)`);
+        const restore = (withSlug: boolean) =>
+          db
+            .prepare(
+              `UPDATE articles SET title = ?, ${withSlug ? 'slug = ?,' : ''} summary = ?, content = ?, cover_image = ?, updated_at = datetime('now') WHERE id = ?`
+            )
+            .run(
+              ...(withSlug
+                ? [revision.title, revision.slug, revision.summary, revision.content, revision.cover_image, p.article_id]
+                : [revision.title, revision.summary, revision.content, revision.cover_image, p.article_id])
+            );
+        try {
+          restore(true);
+        } catch {
+          restore(false);
+        }
+        auditAi(user, 'restore_article_revision', `article:${p.article_id}`, `revision:${revision.id}`);
+        return ok(articleWithTags(db.prepare(`${ARTICLE_LIST_SQL} WHERE a.id = ?`).get(p.article_id) as { id: number }));
       },
     })
   );
@@ -416,8 +553,26 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
     })
   );
 
-  // ---- 媒体库(只读) ----
+  // ---- 媒体库 ----
   tools.push(
+    defineTool({
+      name: 'delete_media',
+      label: '删除媒体文件',
+      description: '从媒体库永久删除一个文件(磁盘文件一并删除,不可恢复)。删除前必须得到用户的明确确认。',
+      parameters: Type.Object({
+        id: Type.Number({ description: '媒体文件 ID' }),
+      }),
+      execute: async (_id, p) => {
+        const row = db.prepare(`SELECT filename, original_name FROM media WHERE id = ?`).get(p.id) as
+          | { filename: string; original_name: string }
+          | undefined;
+        if (!row) throw new Error('文件不存在');
+        db.prepare(`DELETE FROM media WHERE id = ?`).run(p.id);
+        fs.rm(path.join(config.uploadDir, row.filename), { force: true }, () => {});
+        auditAi(user, 'delete_media', `media:${p.id}`, row.original_name);
+        return ok({ ok: true, deleted: row.original_name });
+      },
+    }),
     defineTool({
       name: 'list_media',
       label: '媒体列表',
@@ -432,12 +587,12 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         const items = (
           db
             .prepare(
-              `SELECT m.id, m.filename, m.original_name, m.mime_type, m.size, m.created_at, u.display_name AS uploader_name
+              `SELECT m.id, m.filename, m.original_name, m.mime_type, m.size, m.thumb_filename, m.created_at, u.display_name AS uploader_name
                FROM media m LEFT JOIN users u ON u.id = m.uploader_id
                ORDER BY m.id DESC LIMIT ? OFFSET ?`
             )
-            .all(pageSize, (page - 1) * pageSize) as ({ filename: string } & Record<string, unknown>)[]
-        ).map((m) => ({ ...m, url: `/uploads/${m.filename}` }));
+            .all(pageSize, (page - 1) * pageSize) as ({ filename: string; thumb_filename: string | null } & Record<string, unknown>)[]
+        ).map((m) => ({ ...m, url: `/uploads/${m.filename}`, thumb_url: m.thumb_filename ? `/uploads/${m.thumb_filename}` : null }));
         return ok({ items, total, page, page_size: pageSize });
       },
     })
@@ -578,17 +733,35 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
       defineTool({
         name: 'list_audit_logs',
         label: '审计日志',
-        description: '分页查询审计日志(仅管理员)。AI 助手的操作 action 以 ai: 前缀标识。',
+        description: '分页查询审计日志(仅管理员),支持按操作类型、用户名、关键词筛选。AI 助手的操作 action 以 ai: 前缀标识。',
         parameters: Type.Object({
           page: Type.Optional(Type.Number({ description: '页码,默认 1' })),
+          action: Type.Optional(Type.String({ description: '操作类型,如 login / create_article / ai:update_article' })),
+          username: Type.Optional(Type.String({ description: '按用户名筛选' })),
+          q: Type.Optional(Type.String({ description: '在操作对象/详情中搜索关键词' })),
         }),
         execute: async (_id, p) => {
           const page = Math.max(1, p.page ?? 1);
           const pageSize = 50;
-          const total = (db.prepare(`SELECT COUNT(*) AS c FROM audit_logs`).get() as { c: number }).c;
+          const conditions: string[] = [];
+          const params: string[] = [];
+          if (p.action) {
+            conditions.push('action = ?');
+            params.push(p.action);
+          }
+          if (p.username) {
+            conditions.push('username = ?');
+            params.push(p.username);
+          }
+          if (p.q) {
+            conditions.push('(target LIKE ? OR detail LIKE ?)');
+            params.push(`%${p.q}%`, `%${p.q}%`);
+          }
+          const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+          const total = (db.prepare(`SELECT COUNT(*) AS c FROM audit_logs${where}`).get(...params) as { c: number }).c;
           const items = db
-            .prepare(`SELECT * FROM audit_logs ORDER BY id DESC LIMIT ? OFFSET ?`)
-            .all(pageSize, (page - 1) * pageSize);
+            .prepare(`SELECT * FROM audit_logs${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+            .all(...params, pageSize, (page - 1) * pageSize);
           return ok({ items, total, page, page_size: pageSize });
         },
       })

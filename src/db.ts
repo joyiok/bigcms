@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS articles (
   author_id    INTEGER NOT NULL REFERENCES users(id),
   views        INTEGER NOT NULL DEFAULT 0,
   published_at TEXT,
+  scheduled_at TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -65,13 +66,28 @@ CREATE TABLE IF NOT EXISTS article_tags (
 );
 
 CREATE TABLE IF NOT EXISTS media (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  filename      TEXT NOT NULL UNIQUE,
-  original_name TEXT NOT NULL,
-  mime_type     TEXT NOT NULL,
-  size          INTEGER NOT NULL,
-  uploader_id   INTEGER NOT NULL REFERENCES users(id),
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename       TEXT NOT NULL UNIQUE,
+  original_name  TEXT NOT NULL,
+  mime_type      TEXT NOT NULL,
+  size           INTEGER NOT NULL,
+  thumb_filename TEXT,
+  uploader_id    INTEGER NOT NULL REFERENCES users(id),
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS article_revisions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  article_id  INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  slug        TEXT NOT NULL,
+  summary     TEXT NOT NULL DEFAULT '',
+  content     TEXT NOT NULL DEFAULT '',
+  cover_image TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL,
+  category_id INTEGER,
+  saved_by    TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -92,7 +108,92 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status);
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_revisions_article ON article_revisions(article_id);
 `);
+
+/** 修订历史:每篇文章保留的最大版本数 */
+const MAX_REVISIONS = 20;
+
+/** 在文章被修改前快照当前版本(供修订历史/恢复使用),并裁剪到最近 N 版 */
+export function snapshotArticle(articleId: number, savedBy: string): void {
+  const row = db
+    .prepare(`SELECT title, slug, summary, content, cover_image, status, category_id FROM articles WHERE id = ?`)
+    .get(articleId) as
+    | { title: string; slug: string; summary: string; content: string; cover_image: string; status: string; category_id: number | null }
+    | undefined;
+  if (!row) return;
+  db.prepare(
+    `INSERT INTO article_revisions (article_id, title, slug, summary, content, cover_image, status, category_id, saved_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(articleId, row.title, row.slug, row.summary, row.content, row.cover_image, row.status, row.category_id, savedBy);
+  db.prepare(
+    `DELETE FROM article_revisions WHERE article_id = ?
+       AND id NOT IN (SELECT id FROM article_revisions WHERE article_id = ? ORDER BY id DESC LIMIT ?)`
+  ).run(articleId, articleId, MAX_REVISIONS);
+}
+
+// 迁移:为既有数据库补列(新建库已含,重复添加会抛错并被忽略)
+try {
+  db.exec(`ALTER TABLE articles ADD COLUMN scheduled_at TEXT`);
+} catch {
+  /* 列已存在 */
+}
+try {
+  db.exec(`ALTER TABLE media ADD COLUMN thumb_filename TEXT`);
+} catch {
+  /* 列已存在 */
+}
+
+// ---- 全文检索(FTS5 trigram,标题/摘要/正文;运行环境不支持时回退 LIKE) ----
+let ftsAvailable = false;
+try {
+  db.exec(
+    `CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+       title, summary, content,
+       content='articles', content_rowid='id', tokenize='trigram'
+     )`
+  );
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS articles_fts_ai AFTER INSERT ON articles BEGIN
+      INSERT INTO articles_fts(rowid, title, summary, content) VALUES (new.id, new.title, new.summary, new.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS articles_fts_ad AFTER DELETE ON articles BEGIN
+      INSERT INTO articles_fts(articles_fts, rowid, title, summary, content) VALUES ('delete', old.id, old.title, old.summary, old.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS articles_fts_au AFTER UPDATE OF title, summary, content ON articles BEGIN
+      INSERT INTO articles_fts(articles_fts, rowid, title, summary, content) VALUES ('delete', old.id, old.title, old.summary, old.content);
+      INSERT INTO articles_fts(rowid, title, summary, content) VALUES (new.id, new.title, new.summary, new.content);
+    END;
+  `);
+  // 启动时整体重建索引:外部 content 表无法可靠检测索引缺失(COUNT 读的是源表),
+  // 且需覆盖首次启用、触发器缺失期间的历史写入;CMS 体量下重建为毫秒级。
+  db.exec(`INSERT INTO articles_fts(articles_fts) VALUES ('rebuild')`);
+  ftsAvailable = true;
+} catch (err) {
+  console.warn('[db] FTS5 不可用,搜索回退 LIKE:', err instanceof Error ? err.message : err);
+}
+
+/**
+ * 文章关键词检索条件(要求文章表别名为 a)。
+ * trigram 分词最短匹配 3 个字符:长查询走 FTS(含正文),短查询回退 LIKE。
+ */
+export function articleSearchCondition(q: string): { sql: string; params: string[] } {
+  const kw = q.trim();
+  if (ftsAvailable && [...kw].length >= 3) {
+    // 整体作为短语查询,转义内部双引号,避免用户输入触碰 FTS 操作符语法
+    return { sql: `a.id IN (SELECT rowid FROM articles_fts WHERE articles_fts MATCH ?)`, params: [`"${kw.replace(/"/g, '""')}"`] };
+  }
+  const like = `%${kw}%`;
+  return { sql: `(a.title LIKE ? OR a.summary LIKE ? OR a.content LIKE ?)`, params: [like, like, like] };
+}
+
+/** 把任意可被 Date 解析的时间转为 SQLite UTC 格式(YYYY-MM-DD HH:MM:SS);空值返回 null,非法时间抛错 */
+export function toUtcDateTime(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) throw new Error('时间格式无效,请使用 ISO 8601(如 2026-06-12T09:00:00+08:00)');
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
 
 export function seed(): void {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number };

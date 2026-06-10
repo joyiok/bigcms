@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { marked } from 'marked';
-import { db } from '../db.js';
+import { articleSearchCondition, db } from '../db.js';
+import { renderMarkdown } from '../markdown.js';
 
 export const siteRouter = Router();
 
@@ -80,9 +80,17 @@ function publishedCategories(): { name: string; slug: string; description: strin
     .all() as unknown as { name: string; slug: string; description: string; n: number }[];
 }
 
-function layout(opts: { title: string; settings: Record<string, string>; body: string; active: 'home' | 'news' }): string {
+function layout(opts: {
+  title: string;
+  settings: Record<string, string>;
+  body: string;
+  active: 'home' | 'news';
+  description?: string;
+  ogImage?: string;
+}): string {
   const { title, settings, body, active } = opts;
   const siteName = settings.site_name || 'BigCMS';
+  const description = opts.description || settings.site_description || '';
   const categories = publishedCategories();
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -90,8 +98,14 @@ function layout(opts: { title: string; settings: Record<string, string>; body: s
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${esc(title)}</title>
-<meta name="description" content="${esc(settings.site_description || '')}">
+<meta name="description" content="${esc(description)}">
 <meta name="keywords" content="${esc(settings.site_keywords || '')}">
+<meta property="og:type" content="${active === 'news' ? 'article' : 'website'}">
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(description)}">
+<meta property="og:site_name" content="${esc(siteName)}">
+${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : ''}
+<link rel="alternate" type="application/rss+xml" title="${esc(siteName)}" href="/feed.xml">
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
@@ -221,11 +235,27 @@ siteRouter.get('/news', (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = 10;
   const categorySlug = typeof req.query.category === 'string' ? req.query.category : '';
+  const tagSlug = typeof req.query.tag === 'string' ? req.query.tag : '';
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
 
   const categories = publishedCategories();
 
-  const where = categorySlug ? ` AND c.slug = ?` : '';
-  const params: string[] = categorySlug ? [categorySlug] : [];
+  const conditions: string[] = [];
+  const params: string[] = [];
+  if (categorySlug) {
+    conditions.push('c.slug = ?');
+    params.push(categorySlug);
+  }
+  if (tagSlug) {
+    conditions.push('EXISTS (SELECT 1 FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = a.id AND t.slug = ?)');
+    params.push(tagSlug);
+  }
+  if (q) {
+    const search = articleSearchCondition(q);
+    conditions.push(search.sql);
+    params.push(...search.params);
+  }
+  const where = conditions.length ? ` AND ${conditions.join(' AND ')}` : '';
   const total = (
     db.prepare(`SELECT COUNT(*) AS n FROM articles a LEFT JOIN categories c ON c.id = a.category_id WHERE a.status = 'published'${where}`).get(...params) as { n: number }
   ).n;
@@ -233,15 +263,25 @@ siteRouter.get('/news', (req, res) => {
     .prepare(`${PUBLISHED_SQL}${where} ORDER BY a.published_at DESC LIMIT ? OFFSET ?`)
     .all(...params, pageSize, (page - 1) * pageSize) as unknown as ArticleRow[];
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const pageLink = (p: number) => `/news?${new URLSearchParams({ ...(categorySlug && { category: categorySlug }), ...(p > 1 && { page: String(p) }) })}`.replace(/\?$/, '');
+  const keep = { ...(categorySlug && { category: categorySlug }), ...(tagSlug && { tag: tagSlug }), ...(q && { q }) };
+  const pageLink = (p: number) => `/news?${new URLSearchParams({ ...keep, ...(p > 1 && { page: String(p) }) })}`.replace(/\?$/, '');
+  const tagName = tagSlug
+    ? ((db.prepare(`SELECT name FROM tags WHERE slug = ?`).get(tagSlug) as { name: string } | undefined)?.name ?? tagSlug)
+    : '';
 
   const body = `
 <section class="page-head">
   <h1>新闻中心</h1>
+  <form class="site-search" action="/news" method="get" role="search">
+    ${categorySlug ? `<input type="hidden" name="category" value="${esc(categorySlug)}">` : ''}
+    <input type="search" name="q" value="${esc(q)}" placeholder="搜索新闻…" aria-label="搜索新闻">
+    <button type="submit">搜索</button>
+  </form>
   <nav class="filter-pills" aria-label="按栏目筛选">
-    <a href="/news" ${!categorySlug ? 'aria-current="true"' : ''}>全部</a>
+    <a href="/news" ${!categorySlug && !tagSlug ? 'aria-current="true"' : ''}>全部</a>
     ${categories.map((c) => `<a href="/news?category=${esc(c.slug)}" ${categorySlug === c.slug ? 'aria-current="true"' : ''}>${esc(c.name)} <small>${c.n}</small></a>`).join('')}
   </nav>
+  ${q || tagSlug ? `<p class="filter-state">${q ? `「${esc(q)}」的搜索结果` : `标签「#${esc(tagName)}」下的内容`},共 ${total} 篇 <a href="/news">清除筛选</a></p>` : ''}
 </section>
 <section class="section">
   ${items.length ? `<div class="article-list">
@@ -258,7 +298,7 @@ siteRouter.get('/news', (req, res) => {
       </div>
       <div class="row-thumb">${cover(a, 140)}</div>
     </a>`).join('')}
-  </div>` : `<p class="empty">该栏目暂时没有内容。</p>`}
+  </div>` : `<p class="empty">${q ? '没有找到相关内容,换个关键词试试。' : '该栏目暂时没有内容。'}</p>`}
   ${totalPages > 1 ? `<nav class="pager" aria-label="分页">
     ${page > 1 ? `<a href="${pageLink(page - 1)}">← 上一页</a>` : '<span></span>'}
     <span class="pager-info">${page} / ${totalPages}</span>
@@ -290,9 +330,23 @@ siteRouter.get('/news/:slug', (req, res) => {
 
   db.prepare(`UPDATE articles SET views = views + 1 WHERE id = ?`).run(article.id);
   const tags = db
-    .prepare(`SELECT t.name FROM tags t JOIN article_tags at ON at.tag_id = t.id WHERE at.article_id = ?`)
-    .all(article.id) as { name: string }[];
-  const html = marked.parse(article.content, { async: false });
+    .prepare(`SELECT t.name, t.slug FROM tags t JOIN article_tags at ON at.tag_id = t.id WHERE at.article_id = ?`)
+    .all(article.id) as { name: string; slug: string }[];
+  const html = renderMarkdown(article.content);
+
+  const prev = db
+    .prepare(`SELECT title, slug FROM articles WHERE status = 'published' AND published_at < ? ORDER BY published_at DESC LIMIT 1`)
+    .get(article.published_at) as { title: string; slug: string } | undefined;
+  const next = db
+    .prepare(`SELECT title, slug FROM articles WHERE status = 'published' AND published_at > ? ORDER BY published_at ASC LIMIT 1`)
+    .get(article.published_at) as { title: string; slug: string } | undefined;
+  const related = (
+    article.category_slug
+      ? db
+          .prepare(`${PUBLISHED_SQL} AND c.slug = ? AND a.id != ? ORDER BY a.published_at DESC LIMIT 4`)
+          .all(article.category_slug, article.id)
+      : db.prepare(`${PUBLISHED_SQL} AND a.id != ? ORDER BY a.published_at DESC LIMIT 4`).all(article.id)
+  ) as unknown as ArticleRow[];
 
   const body = `
 <article class="article-page">
@@ -306,9 +360,106 @@ siteRouter.get('/news/:slug', (req, res) => {
   </header>
   ${article.cover_image ? `<div class="article-cover"><img src="${esc(article.cover_image)}" alt="${esc(article.title)}"></div>` : ''}
   <div class="prose">${html}</div>
-  ${tags.length ? `<div class="article-tags">${tags.map((t) => `<span>#${esc(t.name)}</span>`).join('')}</div>` : ''}
+  ${tags.length ? `<div class="article-tags">${tags.map((t) => `<a href="/news?tag=${esc(t.slug)}">#${esc(t.name)}</a>`).join('')}</div>` : ''}
+  <nav class="article-siblings" aria-label="相邻文章">
+    ${next ? `<a class="sib prev" href="/news/${esc(next.slug)}"><span class="sib-label">← 较新一篇</span><span class="sib-title">${esc(next.title)}</span></a>` : '<span></span>'}
+    ${prev ? `<a class="sib next" href="/news/${esc(prev.slug)}"><span class="sib-label">较早一篇 →</span><span class="sib-title">${esc(prev.title)}</span></a>` : '<span></span>'}
+  </nav>
   <nav class="article-back"><a href="/news">← 返回新闻中心</a></nav>
-</article>`;
+</article>
+${related.length ? `
+<section class="section related-section">
+  <h2 class="section-title">相关阅读</h2>
+  <div class="related-list">
+    ${related.map((a) => `
+    <a class="related-item" href="/news/${esc(a.slug)}">
+      <span class="meta-line">${esc(a.category_name || '动态')} · ${fmtDate(a.published_at)}</span>
+      <span class="related-title">${esc(a.title)}</span>
+    </a>`).join('')}
+  </div>
+</section>` : ''}`;
 
-  res.send(layout({ title: `${article.title} · ${settings.site_name || 'BigCMS'}`, settings, body, active: 'news' }));
+  res.send(
+    layout({
+      title: `${article.title} · ${settings.site_name || 'BigCMS'}`,
+      settings,
+      body,
+      active: 'news',
+      description: article.summary || undefined,
+      ogImage: article.cover_image || undefined,
+    })
+  );
+});
+
+// ---- RSS 订阅 ----
+siteRouter.get('/feed.xml', (req, res) => {
+  const settings = getSettings();
+  const base = `${req.protocol}://${req.get('host')}`;
+  const items = db
+    .prepare(`${PUBLISHED_SQL} ORDER BY a.published_at DESC LIMIT 20`)
+    .all() as unknown as ArticleRow[];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>${esc(settings.site_name || 'BigCMS')}</title>
+  <link>${base}/</link>
+  <description>${esc(settings.site_description || '')}</description>
+  <language>zh-CN</language>
+  ${items
+    .map(
+      (a) => `<item>
+    <title>${esc(a.title)}</title>
+    <link>${base}/news/${esc(a.slug)}</link>
+    <guid>${base}/news/${esc(a.slug)}</guid>
+    <description>${esc(a.summary)}</description>
+    ${a.published_at ? `<pubDate>${new Date(a.published_at.replace(' ', 'T') + 'Z').toUTCString()}</pubDate>` : ''}
+    ${a.category_name ? `<category>${esc(a.category_name)}</category>` : ''}
+  </item>`
+    )
+    .join('\n  ')}
+</channel>
+</rss>`;
+  res.type('application/rss+xml').send(xml);
+});
+
+// ---- sitemap.xml ----
+siteRouter.get('/sitemap.xml', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  const articles = db
+    .prepare(`SELECT slug, updated_at FROM articles WHERE status = 'published' ORDER BY published_at DESC`)
+    .all() as { slug: string; updated_at: string }[];
+  const urls = [
+    { loc: `${base}/`, priority: '1.0' },
+    { loc: `${base}/news`, priority: '0.8' },
+    ...publishedCategories().map((c) => ({ loc: `${base}/news?category=${encodeURIComponent(c.slug)}`, priority: '0.6' })),
+    ...articles.map((a) => ({ loc: `${base}/news/${encodeURIComponent(a.slug)}`, priority: '0.7', lastmod: a.updated_at.slice(0, 10) })),
+  ];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc>${'lastmod' in u && u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ''}<priority>${u.priority}</priority></url>`).join('\n')}
+</urlset>`;
+  res.type('application/xml').send(xml);
+});
+
+// ---- robots.txt ----
+siteRouter.get('/robots.txt', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /api/\nSitemap: ${base}/sitemap.xml\n`);
+});
+
+// ---- 404 兜底 ----
+siteRouter.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    next();
+    return;
+  }
+  const settings = getSettings();
+  res.status(404).send(
+    layout({
+      title: `页面不存在 · ${settings.site_name || 'BigCMS'}`,
+      settings,
+      active: 'news',
+      body: `<section class="page-head"><h1>404</h1><p class="empty">您访问的页面不存在。</p><p style="margin-top:24px"><a class="btn-primary" href="/">返回首页</a></p></section>`,
+    })
+  );
 });

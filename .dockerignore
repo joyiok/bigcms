@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+uploads
+tests
+scripts
+.git
+.impeccable
+*.md
+.dockerignore
+Dockerfile

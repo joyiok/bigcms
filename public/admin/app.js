@@ -38,6 +38,19 @@ function fmtDate(s) {
   return s ? s.replace('T', ' ').slice(0, 16) : '-';
 }
 
+/** SQLite UTC 时间(YYYY-MM-DD HH:MM:SS)→ datetime-local 输入框的本地时间值 */
+function utcToLocalInput(s) {
+  if (!s) return '';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+/** SQLite UTC 时间 → 本地可读时间 */
+function utcToLocalText(s) {
+  if (!s) return '-';
+  return new Date(s.replace(' ', 'T') + 'Z').toLocaleString('zh-CN', { hour12: false }).slice(0, 16);
+}
+
 function fmtSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -202,6 +215,7 @@ pages.articles = async (query = { page: 1 }) => {
   const params = new URLSearchParams({ page: query.page || 1, page_size: 10 });
   if (query.status) params.set('status', query.status);
   if (query.q) params.set('q', query.q);
+  if (query.category_id) params.set('category_id', query.category_id);
   const [data, cats] = await Promise.all([api(`/articles?${params}`), api('/categories')]);
 
   $('#main').innerHTML = `
@@ -215,6 +229,10 @@ pages.articles = async (query = { page: 1 }) => {
         <option value="">全部状态</option>
         ${Object.entries(STATUS_TEXT).map(([v, t]) => `<option value="${v}" ${query.status === v ? 'selected' : ''}>${t}</option>`).join('')}
       </select>
+      <select id="f-cat">
+        <option value="">全部分类</option>
+        ${cats.items.map((c) => `<option value="${c.id}" ${Number(query.category_id) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select>
       <button class="btn" id="btn-filter">筛选</button>
     </div>
     <table><thead><tr><th>标题</th><th>分类</th><th>标签</th><th>状态</th><th>作者</th><th>浏览</th><th>更新时间</th><th>操作</th></tr></thead>
@@ -223,7 +241,7 @@ pages.articles = async (query = { page: 1 }) => {
         <td>${esc(a.title)}<div class="muted small">/${esc(a.slug)}</div></td>
         <td>${esc(a.category_name || '-')}</td>
         <td>${a.tags.map((t) => esc(t.name)).join(', ') || '-'}</td>
-        <td><span class="badge ${a.status}">${STATUS_TEXT[a.status]}</span></td>
+        <td><span class="badge ${a.status}">${STATUS_TEXT[a.status]}</span>${a.scheduled_at && a.status === 'draft' ? `<span class="badge scheduled" title="定时发布:${esc(utcToLocalText(a.scheduled_at))}">定时</span>` : ''}</td>
         <td>${esc(a.author_name || '-')}</td>
         <td>${a.views}</td>
         <td>${fmtDate(a.updated_at)}</td>
@@ -233,7 +251,7 @@ pages.articles = async (query = { page: 1 }) => {
     <div id="pager"></div>`;
 
   $('#pager').appendChild(pagination(data.total, data.page, data.page_size, (p) => pages.articles({ ...query, page: p })));
-  $('#btn-filter').onclick = () => pages.articles({ page: 1, q: $('#f-q').value.trim(), status: $('#f-status').value });
+  $('#btn-filter').onclick = () => pages.articles({ page: 1, q: $('#f-q').value.trim(), status: $('#f-status').value, category_id: $('#f-cat').value });
   $('#f-q').onkeydown = (e) => { if (e.key === 'Enter') $('#btn-filter').click(); };
   if (canEdit()) {
     $('#btn-new').onclick = () => articleEditor(null, cats.items, query);
@@ -247,6 +265,23 @@ pages.articles = async (query = { page: 1 }) => {
     }));
   }
 };
+
+/** 媒体库图片选择器,选中后回调图片 URL */
+async function mediaPicker(onSelect) {
+  const data = await api('/media?page=1&page_size=100');
+  const images = data.items.filter((m) => m.mime_type.startsWith('image/'));
+  const mask = openModal(`
+    <h3>从媒体库选择图片</h3>
+    ${images.length ? `<div class="media-grid picker">
+      ${images.map((m) => `<button type="button" class="media-item" data-url="${esc(m.url)}" title="${esc(m.original_name)}">
+        <div class="thumb"><img src="${esc(m.thumb_url || m.url)}" alt="" loading="lazy"></div>
+        <div class="info"><div class="name">${esc(m.original_name)}</div></div>
+      </button>`).join('')}
+    </div>` : '<p class="muted">媒体库中还没有图片,请先在「媒体库」上传。</p>'}
+    <div class="form-actions"><button type="button" class="btn" data-act="cancel">取消</button></div>`);
+  mask.querySelector('[data-act=cancel]').onclick = () => mask.remove();
+  mask.querySelectorAll('[data-url]').forEach((b) => (b.onclick = () => { mask.remove(); onSelect(b.dataset.url); }));
+}
 
 async function articleEditor(article, categories, backQuery) {
   const allTags = (await api('/tags')).items;
@@ -268,19 +303,96 @@ async function articleEditor(article, categories, backQuery) {
             ${categories.map((c) => `<option value="${c.id}" ${article?.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
           </select>
         </div>
-        <div class="form-row"><label>封面图 URL</label><input name="cover_image" value="${esc(article?.cover_image || '')}"></div>
+        <div class="form-row"><label>封面图 URL</label>
+          <div class="input-with-btn">
+            <input name="cover_image" value="${esc(article?.cover_image || '')}">
+            <button type="button" class="btn" id="btn-pick-cover">媒体库</button>
+          </div>
+        </div>
+      </div>
+      <div class="form-row"><label>定时发布(仅草稿生效,到点自动发布;留空不定时)</label>
+        <input type="datetime-local" name="scheduled_at" value="${esc(utcToLocalInput(article?.scheduled_at))}">
       </div>
       <div class="form-row"><label>标签</label>
         <div>${allTags.map((t) => `<label class="chip" style="cursor:pointer"><input type="checkbox" name="tag" value="${t.id}" ${selectedTagIds.has(t.id) ? 'checked' : ''}> ${esc(t.name)}</label>`).join('') || '<span class="muted">暂无标签,可在「标签管理」中创建</span>'}</div>
       </div>
       <div class="form-row"><label>摘要</label><textarea name="summary" rows="2">${esc(article?.summary || '')}</textarea></div>
-      <div class="form-row"><label>正文(支持 Markdown)</label><textarea name="content" rows="12">${esc(article?.content || '')}</textarea></div>
+      <div class="form-row">
+        <div class="editor-toolbar">
+          <label>正文(支持 Markdown)</label>
+          <div class="editor-tools">
+            <button type="button" class="btn small" id="btn-insert-img">插入图片</button>
+            <div class="tab-group" role="tablist">
+              <button type="button" class="tab active" id="tab-edit">编辑</button>
+              <button type="button" class="tab" id="tab-preview">预览</button>
+            </div>
+          </div>
+        </div>
+        <textarea name="content" rows="12">${esc(article?.content || '')}</textarea>
+        <div class="md-preview prose hidden"></div>
+      </div>
       <div class="form-actions">
+        ${article ? '<button type="button" class="btn" id="btn-revisions" style="margin-right:auto">历史版本</button>' : ''}
         <button type="button" class="btn" data-act="cancel">取消</button>
         <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
   mask.querySelector('[data-act=cancel]').onclick = () => mask.remove();
+  if (article) {
+    mask.querySelector('#btn-revisions').onclick = async () => {
+      const { items } = await api(`/articles/${article.id}/revisions`);
+      const revMask = openModal(`
+        <h3>历史版本(每次保存前自动快照,最多 20 版)</h3>
+        ${items.length ? `<table><thead><tr><th>#</th><th>标题</th><th>状态</th><th>正文长度</th><th>保存者</th><th>时间</th><th></th></tr></thead><tbody>
+          ${items.map((r) => `<tr>
+            <td class="muted">${r.id}</td><td>${esc(r.title)}</td><td><span class="badge ${r.status}">${STATUS_TEXT[r.status] || r.status}</span></td>
+            <td>${r.content_length} 字符</td><td>${esc(r.saved_by || '-')}</td><td>${utcToLocalText(r.created_at)}</td>
+            <td><button class="btn small" data-restore="${r.id}">恢复</button></td>
+          </tr>`).join('')}
+        </tbody></table>` : '<p class="muted">还没有修订记录,保存一次后就会生成。</p>'}
+        <div class="form-actions"><button type="button" class="btn" data-act="cancel">关闭</button></div>`);
+      revMask.querySelector('[data-act=cancel]').onclick = () => revMask.remove();
+      revMask.querySelectorAll('[data-restore]').forEach((b) => (b.onclick = async () => {
+        if (!(await confirmDialog('恢复到该版本?将覆盖当前的标题/摘要/正文/封面(当前版会先自动快照)。'))) return;
+        try {
+          await api(`/articles/${article.id}/revisions/${b.dataset.restore}/restore`, { method: 'POST' });
+          toast('已恢复');
+          revMask.remove();
+          mask.remove();
+          pages.articles(backQuery);
+        } catch (err) { toast(err.message, true); }
+      }));
+    };
+  }
+
+  const contentEl = mask.querySelector('textarea[name=content]');
+  const previewEl = mask.querySelector('.md-preview');
+  const tabEdit = mask.querySelector('#tab-edit');
+  const tabPreview = mask.querySelector('#tab-preview');
+  tabEdit.onclick = () => {
+    tabEdit.classList.add('active'); tabPreview.classList.remove('active');
+    contentEl.classList.remove('hidden'); previewEl.classList.add('hidden');
+  };
+  tabPreview.onclick = async () => {
+    tabPreview.classList.add('active'); tabEdit.classList.remove('active');
+    contentEl.classList.add('hidden'); previewEl.classList.remove('hidden');
+    previewEl.innerHTML = '<p class="muted">渲染中…</p>';
+    try {
+      const { html } = await api('/articles/preview', { method: 'POST', body: { content: contentEl.value } });
+      previewEl.innerHTML = html || '<p class="muted">(正文为空)</p>';
+    } catch (err) { previewEl.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+  };
+  mask.querySelector('#btn-pick-cover').onclick = () => mediaPicker((url) => {
+    mask.querySelector('input[name=cover_image]').value = url;
+  });
+  mask.querySelector('#btn-insert-img').onclick = () => mediaPicker((url) => {
+    tabEdit.onclick();
+    const pos = contentEl.selectionStart ?? contentEl.value.length;
+    const md = `![图片](${url})`;
+    contentEl.value = contentEl.value.slice(0, pos) + md + contentEl.value.slice(contentEl.selectionEnd ?? pos);
+    contentEl.focus();
+    contentEl.selectionStart = contentEl.selectionEnd = pos + md.length;
+  });
   mask.querySelector('#article-form').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -292,6 +404,7 @@ async function articleEditor(article, categories, backQuery) {
       cover_image: fd.get('cover_image'),
       summary: fd.get('summary'),
       content: fd.get('content'),
+      scheduled_at: fd.get('scheduled_at') ? new Date(fd.get('scheduled_at')).toISOString() : null,
       tag_ids: [...e.target.querySelectorAll('input[name=tag]:checked')].map((i) => Number(i.value)),
     };
     try {
@@ -384,11 +497,11 @@ pages.media = async (page = 1) => {
   $('#main').innerHTML = `
     <div class="page-header">
       <h2>媒体库</h2>
-      ${canEdit() ? '<label class="btn primary">+ 上传文件<input type="file" id="file-input" hidden></label>' : ''}
+      ${canEdit() ? '<label class="btn primary">+ 上传文件<input type="file" id="file-input" multiple hidden></label>' : ''}
     </div>
     <div class="media-grid">
       ${data.items.map((m) => `<div class="media-item">
-        <div class="thumb">${m.mime_type.startsWith('image/') ? `<img src="${esc(m.url)}" alt="" loading="lazy">` : '📄'}</div>
+        <div class="thumb">${m.mime_type.startsWith('image/') ? `<img src="${esc(m.thumb_url || m.url)}" alt="" loading="lazy">` : '📄'}</div>
         <div class="info">
           <div class="name" title="${esc(m.original_name)}">${esc(m.original_name)}</div>
           <div class="muted">${fmtSize(m.size)} · ${esc(m.uploader_name || '')}</div>
@@ -407,12 +520,17 @@ pages.media = async (page = 1) => {
   }));
   if (canEdit()) {
     $('#file-input').onchange = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const fd = new FormData();
-      fd.append('file', file);
-      try { await api('/media', { method: 'POST', body: fd }); toast('上传成功'); pages.media(page); }
-      catch (err) { toast(err.message, true); }
+      const files = [...e.target.files];
+      if (!files.length) return;
+      let ok = 0;
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        try { await api('/media', { method: 'POST', body: fd }); ok++; }
+        catch (err) { toast(`${file.name}:${err.message}`, true); }
+      }
+      if (ok) toast(`已上传 ${ok} 个文件`);
+      pages.media(page);
     };
     document.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
       if (!(await confirmDialog('确定删除该文件吗?'))) return;
@@ -509,12 +627,20 @@ pages.settings = async () => {
 // ---------- AI 助手 ----------
 const AI_TOOL_LABELS = {
   get_stats: '站点统计', list_articles: '查询文章', get_article: '读取文章', create_article: '新建文章',
-  update_article: '更新文章', delete_article: '删除文章', list_categories: '查询分类', create_category: '新建分类',
+  update_article: '更新文章', delete_article: '删除文章', bulk_update_articles: '批量更新文章',
+  list_categories: '查询分类', create_category: '新建分类',
   update_category: '更新分类', delete_category: '删除分类', list_tags: '查询标签', create_tag: '新建标签',
-  delete_tag: '删除标签', list_media: '查询媒体库', get_settings: '查看设置', update_settings: '修改设置',
+  delete_tag: '删除标签', list_media: '查询媒体库', delete_media: '删除媒体文件', get_settings: '查看设置', update_settings: '修改设置',
   list_users: '查询用户', create_user: '新建用户', update_user: '更新用户', delete_user: '删除用户',
-  list_audit_logs: '查询审计日志',
+  list_audit_logs: '查询审计日志', list_article_revisions: '查询修订历史', restore_article_revision: '恢复修订版本',
 };
+
+const AI_SUGGESTIONS = [
+  '写一篇产品更新公告(先存草稿)',
+  '列出所有草稿',
+  '把所有草稿都发布',
+  '今天的站点数据概览',
+];
 
 /** 极简 Markdown 渲染(仅粗体/行内代码/代码块/换行,输入先转义) */
 function mdLite(text) {
@@ -529,7 +655,8 @@ let aiBusy = false;
 
 function aiRenderParts(el, parts) {
   el.innerHTML = parts.map((p) => {
-    if (p.type === 'tool') return `<span class="ai-tool${p.error ? ' error' : ''}${p.done ? '' : ' running'}">${esc(AI_TOOL_LABELS[p.name] || p.name)}</span>`;
+    if (p.type === 'tool') return `<span class="ai-tool${p.error ? ' error' : ''}${p.done ? '' : ' running'}" ${p.args ? `title="${esc(p.args)}"` : ''}>${esc(AI_TOOL_LABELS[p.name] || p.name)}</span>`;
+    if (p.type === 'usage') return `<div class="ai-usage">${p.tokens.toLocaleString()} tokens${p.cost ? ` · $${p.cost.toFixed(4)}` : ''}</div>`;
     return `<div class="ai-md">${mdLite(p.text)}</div>`;
   }).join('');
 }
@@ -540,14 +667,15 @@ pages.assistant = async () => {
     <div class="page-header">
       <h2>AI 助手</h2>
       <div class="ai-header-right">
-        ${status.ready ? `<span class="muted small">模型:${esc(status.model.name)}</span>` : ''}
+        ${status.ready ? `<span class="muted small">模型:${esc(status.model.provider)} · ${esc(status.model.name)}</span>` : ''}
         <button class="btn small" id="ai-reset" ${status.ready ? '' : 'disabled'}>清空会话</button>
       </div>
     </div>
     ${status.ready ? '' : `<div class="card ai-offline"><strong>AI 助手未就绪</strong><p class="muted" style="margin-top:6px">${esc(status.error || '')}</p></div>`}
     <div class="ai-chat">
       <div class="ai-messages" id="ai-messages">
-        <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网的全部内容:写文章、发布、改分类标签、调站点设置等。试试对我说:「把最新的草稿发布」或「写一篇产品更新公告」。</div></div></div>
+        <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网的全部内容:写文章、发布、改分类标签、调站点设置等。</div></div></div>
+        ${status.ready ? `<div class="ai-suggestions" id="ai-suggestions">${AI_SUGGESTIONS.map((s) => `<button type="button" class="ai-chip" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
       </div>
       <form class="ai-input" id="ai-form">
         <textarea id="ai-text" rows="2" placeholder="输入指令,Enter 发送,Shift+Enter 换行…" ${status.ready ? '' : 'disabled'}></textarea>
@@ -569,15 +697,20 @@ pages.assistant = async () => {
   if (status.ready) {
     try {
       const h = await api('/assistant/history');
+      if (h.messages.length) $('#ai-suggestions')?.remove();
       for (const m of h.messages) {
         const bubble = addMsg(m.role);
         const parts = [];
-        for (const t of m.tools || []) parts.push({ type: 'tool', name: t, done: true });
+        for (const t of m.tools || []) parts.push({ type: 'tool', name: t.name ?? t, args: t.args || '', done: true });
         if (m.text) parts.push({ type: 'text', text: m.text });
         aiRenderParts(bubble, parts);
       }
       scroll();
     } catch { /* 历史加载失败不阻塞聊天 */ }
+    document.querySelectorAll('#ai-suggestions .ai-chip').forEach((b) => (b.onclick = () => {
+      $('#ai-text').value = b.dataset.q;
+      $('#ai-text').focus();
+    }));
   }
 
   $('#ai-reset').onclick = async () => {
@@ -593,7 +726,10 @@ pages.assistant = async () => {
     if (!text || aiBusy) return;
     aiBusy = true;
     $('#ai-text').value = '';
-    $('#ai-send').disabled = true;
+    $('#ai-suggestions')?.remove();
+    const sendBtn0 = $('#ai-send');
+    sendBtn0.textContent = '停止';
+    sendBtn0.classList.add('stop');
     aiRenderParts(addMsg('user'), [{ type: 'text', text }]);
 
     const bubble = addMsg('assistant');
@@ -620,10 +756,12 @@ pages.assistant = async () => {
           if (last && last.type === 'text') last.text += data.text;
           else parts.push({ type: 'text', text: data.text });
         } else if (ev === 'tool_start') {
-          parts.push({ type: 'tool', name: data.name, done: false });
+          parts.push({ type: 'tool', name: data.name, args: data.args || '', done: false });
         } else if (ev === 'tool_end') {
           const t = [...parts].reverse().find((p) => p.type === 'tool' && p.name === data.name && !p.done);
           if (t) { t.done = true; t.error = data.isError; }
+        } else if (ev === 'done') {
+          if (data.tokens) parts.push({ type: 'usage', tokens: data.tokens, cost: data.cost || 0 });
         } else if (ev === 'error') {
           parts.push({ type: 'text', text: `⚠️ ${data.message}` });
         }
@@ -652,27 +790,55 @@ pages.assistant = async () => {
     } finally {
       aiBusy = false;
       const sendBtn = $('#ai-send');
-      if (sendBtn) sendBtn.disabled = false;
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = '发送';
+        sendBtn.classList.remove('stop');
+      }
       scroll();
     }
   };
 
-  $('#ai-form').onsubmit = (e) => { e.preventDefault(); send(); };
+  $('#ai-form').onsubmit = (e) => {
+    e.preventDefault();
+    if (aiBusy) { api('/assistant/abort', { method: 'POST' }).catch(() => {}); return; }
+    send();
+  };
   $('#ai-text').onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
 };
 
 // ---------- 审计日志 ----------
-pages.audit = async (page = 1) => {
-  const data = await api(`/audit-logs?page=${page}`);
+pages.audit = async (query = { page: 1 }) => {
+  if (typeof query === 'number') query = { page: query };
+  const params = new URLSearchParams({ page: query.page || 1 });
+  if (query.action) params.set('action', query.action);
+  if (query.username) params.set('username', query.username);
+  if (query.q) params.set('q', query.q);
+  const data = await api(`/audit-logs?${params}`);
   $('#main').innerHTML = `
     <div class="page-header"><h2>审计日志</h2></div>
+    <div class="toolbar">
+      <select id="f-user">
+        <option value="">全部用户</option>
+        ${(data.usernames || []).map((u) => `<option value="${esc(u)}" ${query.username === u ? 'selected' : ''}>${esc(u)}</option>`).join('')}
+      </select>
+      <select id="f-action">
+        <option value="">全部操作</option>
+        ${(data.actions || []).map((a) => `<option value="${esc(a)}" ${query.action === a ? 'selected' : ''}>${esc(a)}</option>`).join('')}
+      </select>
+      <input type="search" id="f-q" placeholder="搜索对象/详情…" value="${esc(query.q || '')}">
+      <button class="btn" id="btn-filter">筛选</button>
+    </div>
     <table><thead><tr><th>#</th><th>用户</th><th>操作</th><th>对象</th><th>详情</th><th>时间</th></tr></thead><tbody>
       ${data.items.map((l) => `<tr><td class="muted">${l.id}</td><td>${esc(l.username)}</td><td>${esc(l.action)}</td><td>${esc(l.target || '-')}</td><td>${esc(l.detail || '-')}</td><td>${fmtDate(l.created_at)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">暂无日志</td></tr>'}
     </tbody></table>
     <div id="pager"></div>`;
-  $('#pager').appendChild(pagination(data.total, data.page, data.page_size, (p) => pages.audit(p)));
+  const filter = () => pages.audit({ page: 1, username: $('#f-user').value, action: $('#f-action').value, q: $('#f-q').value.trim() });
+  $('#btn-filter').onclick = filter;
+  $('#f-q').onkeydown = (e) => { if (e.key === 'Enter') filter(); };
+  $('#pager').appendChild(pagination(data.total, data.page, data.page_size, (p) => pages.audit({ ...query, page: p })));
 };
 
 boot();

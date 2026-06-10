@@ -5,10 +5,29 @@ import { hashPassword, verifyPassword } from '../password.js';
 
 export const authRouter = Router();
 
+/** 登录失败滑动窗口限速:同一 IP+账号 15 分钟内最多失败 10 次 */
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 10;
+const loginFailures = new Map<string, number[]>();
+
+function pruneFailures(key: string): number[] {
+  const now = Date.now();
+  const list = (loginFailures.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS);
+  if (list.length) loginFailures.set(key, list);
+  else loginFailures.delete(key);
+  return list;
+}
+
 authRouter.post('/login', (req, res) => {
   const { username, password } = req.body ?? {};
   if (!username || !password) {
     res.status(400).json({ error: '请输入用户名和密码' });
+    return;
+  }
+  const attempted = String(username).slice(0, 64);
+  const rateKey = `${req.ip}|${attempted.toLowerCase()}`;
+  if (pruneFailures(rateKey).length >= LOGIN_MAX_FAILURES) {
+    res.status(429).json({ error: '失败次数过多,请 15 分钟后再试' });
     return;
   }
   const user = db
@@ -18,9 +37,15 @@ authRouter.post('/login', (req, res) => {
     | undefined;
 
   if (!user || !verifyPassword(password, user.password_hash)) {
+    loginFailures.set(rateKey, [...pruneFailures(rateKey), Date.now()]);
+    db.prepare(`INSERT INTO audit_logs (user_id, username, action, detail) VALUES (NULL, ?, 'login_failed', ?)`).run(
+      attempted,
+      `ip:${req.ip}`
+    );
     res.status(401).json({ error: '用户名或密码错误' });
     return;
   }
+  loginFailures.delete(rateKey);
   if (user.status !== 'active') {
     res.status(403).json({ error: '账号已被禁用' });
     return;

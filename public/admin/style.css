@@ -117,6 +117,7 @@ td a:hover { color: var(--primary); }
 .badge.draft, .badge.editor { color: var(--amber); background: var(--amber-bg); }
 .badge.admin { background: var(--primary); color: #fff; }
 .badge.archived, .badge.disabled, .badge.viewer { color: var(--muted); background: oklch(0.94 0.004 195); }
+.badge.scheduled { color: var(--primary-strong); background: var(--primary-tint); margin-left: 4px; }
 
 /* ---- 工具栏 ---- */
 .toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -144,6 +145,45 @@ td a:hover { color: var(--primary); }
 .form-row input:focus, .form-row textarea:focus, .form-row select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(0.45 0.08 195 / 0.12); }
 .form-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+
+/* ---- 文章编辑器 ---- */
+.input-with-btn { display: flex; gap: 8px; }
+.input-with-btn input { flex: 1; }
+.editor-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.editor-tools { display: flex; gap: 10px; align-items: center; }
+.tab-group { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
+.tab {
+  border: none; background: var(--card); color: var(--muted); cursor: pointer;
+  padding: 4px 14px; font-size: 12px; font-family: var(--body);
+  transition: background .15s, color .15s;
+}
+.tab + .tab { border-left: 1px solid var(--border-strong); }
+.tab.active { background: var(--primary); color: #fff; font-weight: 600; }
+.md-preview {
+  min-height: 200px; max-height: 420px; overflow-y: auto;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  padding: 14px 16px; background: var(--bg); line-height: 1.75;
+}
+.md-preview h1, .md-preview h2, .md-preview h3 { margin: 1.2em 0 0.5em; }
+.md-preview h1:first-child, .md-preview h2:first-child, .md-preview p:first-child { margin-top: 0; }
+.md-preview p, .md-preview ul, .md-preview ol { margin-bottom: 0.9em; }
+.md-preview ul, .md-preview ol { padding-left: 1.4em; }
+.md-preview a { color: var(--primary); }
+.md-preview blockquote { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; color: var(--muted); margin-bottom: 0.9em; }
+.md-preview code { background: oklch(0.94 0.005 195); border-radius: 4px; padding: 1px 5px; font-size: 0.9em; }
+.md-preview pre { background: oklch(0.94 0.005 195); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; overflow-x: auto; margin-bottom: 0.9em; }
+.md-preview pre code { background: none; padding: 0; }
+.md-preview img { max-width: 100%; border-radius: 6px; }
+.md-preview table { border-collapse: collapse; margin-bottom: 0.9em; }
+.md-preview th, .md-preview td { border: 1px solid var(--border); padding: 6px 10px; }
+
+/* ---- 媒体选择器 ---- */
+.media-grid.picker { margin-bottom: 14px; }
+.media-grid.picker .media-item {
+  cursor: pointer; font-family: var(--body); text-align: left; padding: 0;
+  transition: border-color .15s, box-shadow .15s;
+}
+.media-grid.picker .media-item:hover { border-color: var(--primary); box-shadow: 0 0 0 3px oklch(0.45 0.08 195 / 0.15); }
 
 /* ---- 弹窗 ---- */
 .modal-mask {
@@ -215,6 +255,16 @@ td a:hover { color: var(--primary); }
 .ai-tool.running::before { content: '…'; }
 .ai-tool.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 .ai-tool.error::before { content: '✕'; }
+.ai-usage { margin-top: 8px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ai-suggestions { display: flex; gap: 8px; flex-wrap: wrap; padding-left: 4px; }
+.ai-chip {
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--ink);
+  padding: 6px 14px; border-radius: 99px; font-size: 12.5px; font-family: var(--body); cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.ai-chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-tint); }
+.btn.stop { background: var(--danger); border-color: var(--danger); }
+.btn.stop:hover { background: oklch(0.48 0.17 25); color: #fff; }
 .ai-typing { display: inline-flex; gap: 4px; padding: 4px 0; }
 .ai-typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: ai-blink 1.2s infinite; }
 .ai-typing i:nth-child(2) { animation-delay: .2s; }

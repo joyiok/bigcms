@@ -7,7 +7,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backup": "node scripts/backup.mjs",
+    "test": "node --import tsx --test tests/api.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.79.1",
@@ -16,6 +18,7 @@
     "jsonwebtoken": "^9.0.2",
     "marked": "^18.0.5",
     "multer": "^2.0.1",
+    "sharp": "^0.34.5",
     "typebox": "^1.1.38"
   },
   "devDependencies": {

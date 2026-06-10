@@ -7,6 +7,21 @@ export const assistantRouter = Router();
 
 assistantRouter.use(requireAuth, requireRole('editor'));
 
+/** 把工具调用参数压成一行简短摘要,供前端展示(如「更新文章 id: 3, status: published」) */
+function summarizeArgs(args: unknown): string {
+  if (!args || typeof args !== 'object') return '';
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    let v: string;
+    if (typeof value === 'string') v = value.length > 40 ? `${value.slice(0, 40)}…` : value;
+    else if (Array.isArray(value)) v = `[${value.length} 项]`;
+    else v = String(value);
+    parts.push(`${key}: ${v}`);
+    if (parts.join(', ').length > 120) break;
+  }
+  return parts.join(', ').slice(0, 140);
+}
+
 /** 助手可用性与当前模型 */
 assistantRouter.get('/status', async (req, res) => {
   try {
@@ -21,7 +36,7 @@ assistantRouter.get('/status', async (req, res) => {
 assistantRouter.get('/history', async (req, res) => {
   try {
     const { session } = await getAssistantEntry(req.user!);
-    const messages: { role: 'user' | 'assistant'; text: string; tools: string[] }[] = [];
+    const messages: { role: 'user' | 'assistant'; text: string; tools: { name: string; args: string }[] }[] = [];
     for (const m of session.messages) {
       if (m.role === 'user') {
         const text =
@@ -38,7 +53,9 @@ assistantRouter.get('/history', async (req, res) => {
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
           .map((c) => c.text)
           .join('');
-        const tools = m.content.filter((c) => c.type === 'toolCall').map((c) => c.name);
+        const tools = m.content
+          .filter((c) => c.type === 'toolCall')
+          .map((c) => ({ name: c.name, args: summarizeArgs((c as { arguments?: unknown }).arguments) }));
         if (text || tools.length) messages.push({ role: 'assistant', text, tools });
       }
     }
@@ -52,6 +69,17 @@ assistantRouter.get('/history', async (req, res) => {
 assistantRouter.post('/reset', async (req, res) => {
   await resetAssistantSession(req.user!.id);
   res.json({ ok: true });
+});
+
+/** 中止当前正在生成的回复 */
+assistantRouter.post('/abort', async (req, res) => {
+  try {
+    const { session } = await getAssistantEntry(req.user!);
+    if (session.isStreaming) await session.abort();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 /** 发送消息,SSE 流式返回 */
@@ -94,7 +122,7 @@ assistantRouter.post('/chat', async (req, res) => {
         }
         break;
       case 'tool_execution_start':
-        send('tool_start', { name: event.toolName });
+        send('tool_start', { name: event.toolName, args: summarizeArgs(event.args) });
         break;
       case 'tool_execution_end':
         send('tool_end', { name: event.toolName, isError: event.isError });
@@ -111,7 +139,18 @@ assistantRouter.post('/chat', async (req, res) => {
     await session.prompt(message);
     const errorMessage = session.agent.state.errorMessage;
     if (errorMessage) send('error', { message: errorMessage });
-    send('done', {});
+    // 汇总本轮全部 assistant 消息的 token 用量与成本(一轮可能含多次工具往返)
+    let tokens = 0;
+    let cost = 0;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const m = session.messages[i]!;
+      if (m.role === 'user') break;
+      if (m.role === 'assistant' && m.usage) {
+        tokens += m.usage.totalTokens ?? 0;
+        cost += m.usage.cost?.total ?? 0;
+      }
+    }
+    send('done', tokens ? { tokens, cost } : {});
   } catch (err) {
     send('error', { message: err instanceof Error ? err.message : String(err) });
     send('done', {});
