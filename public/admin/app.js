@@ -640,6 +640,8 @@ pages.settings = async () => {
         ['site_name', '站点名称'],
         ['site_description', '站点描述', { type: 'textarea', rows: 2 }],
         ['site_keywords', '关键词', { placeholder: '逗号分隔' }],
+        ['site_url', '站点 URL', { placeholder: 'https://www.example.com（canonical / sitemap）' }],
+        ['site_logo', 'Logo URL', { placeholder: '分享图与结构化数据用' }],
         ['icp_number', 'ICP 备案号'],
         ['site_footer_credit', '页脚署名'],
       ],

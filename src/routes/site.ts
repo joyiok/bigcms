@@ -1,6 +1,18 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { articleSearchCondition, db } from '../db.js';
 import { renderMarkdown } from '../markdown.js';
+import {
+  absoluteUrl,
+  articleJsonLd,
+  breadcrumbJsonLd,
+  isoDateTime,
+  jsonLdScript,
+  organizationJsonLd,
+  seoDescription,
+  seoImageUrl,
+  siteBaseUrl,
+  websiteJsonLd,
+} from '../seo.js';
 import { homeValueItems, parseValueItem, siteCopy, siteHref, sitePageTitle } from '../site-copy.js';
 
 export const siteRouter = Router();
@@ -162,17 +174,60 @@ function publishedCategories(): { name: string; slug: string; description: strin
 }
 
 function layout(opts: {
+  req: Request;
   title: string;
   settings: Record<string, string>;
   body: string;
   active: 'home' | 'news' | 'products' | 'contact';
+  canonicalPath: string;
   description?: string;
   ogImage?: string;
+  ogType?: 'website' | 'article';
+  noindex?: boolean;
+  jsonLd?: Record<string, unknown>[];
+  articlePublished?: string | null;
+  articleModified?: string | null;
+  prevUrl?: string;
+  nextUrl?: string;
 }): string {
-  const { title, settings, body, active } = opts;
+  const { title, settings, body, active, req } = opts;
   const siteName = siteCopy(settings, 'site_name');
-  const description = opts.description || siteCopy(settings, 'site_description');
+  const baseUrl = siteBaseUrl(req, settings);
+  const canonical = absoluteUrl(baseUrl, opts.canonicalPath);
+  const description = seoDescription(opts.description || siteCopy(settings, 'site_description'));
+  const keywords = siteCopy(settings, 'site_keywords').trim();
+  const ogType = opts.ogType || (opts.articlePublished ? 'article' : 'website');
+  const defaultOgImage = seoImageUrl(
+    baseUrl,
+    siteCopy(settings, 'site_logo').trim() || siteCopy(settings, 'hero_image').trim()
+  );
+  const ogImage = seoImageUrl(baseUrl, opts.ogImage) || defaultOgImage;
+  const publishedIso = isoDateTime(opts.articlePublished);
+  const modifiedIso = isoDateTime(opts.articleModified) || publishedIso;
   const categories = publishedCategories();
+  const headExtra = [
+    opts.noindex ? '<meta name="robots" content="noindex,follow">' : '<meta name="robots" content="index,follow">',
+    `<link rel="canonical" href="${esc(canonical)}">`,
+    keywords ? `<meta name="keywords" content="${esc(keywords)}">` : '',
+    '<meta property="og:locale" content="zh_CN">',
+    `<meta property="og:type" content="${ogType}">`,
+    `<meta property="og:title" content="${esc(title)}">`,
+    `<meta property="og:description" content="${esc(description)}">`,
+    `<meta property="og:site_name" content="${esc(siteName)}">`,
+    `<meta property="og:url" content="${esc(canonical)}">`,
+    ogImage ? `<meta property="og:image" content="${esc(ogImage)}">` : '',
+    publishedIso ? `<meta property="article:published_time" content="${publishedIso}">` : '',
+    modifiedIso && ogType === 'article' ? `<meta property="article:modified_time" content="${modifiedIso}">` : '',
+    '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:title" content="${esc(title)}">`,
+    `<meta name="twitter:description" content="${esc(description)}">`,
+    ogImage ? `<meta name="twitter:image" content="${esc(ogImage)}">` : '',
+    opts.prevUrl ? `<link rel="prev" href="${esc(absoluteUrl(baseUrl, opts.prevUrl))}">` : '',
+    opts.nextUrl ? `<link rel="next" href="${esc(absoluteUrl(baseUrl, opts.nextUrl))}">` : '',
+    ...(opts.jsonLd || []).map((block) => jsonLdScript(block)),
+  ]
+    .filter(Boolean)
+    .join('\n');
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -180,13 +235,9 @@ function layout(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
-<meta name="keywords" content="${esc(siteCopy(settings, 'site_keywords'))}">
-<meta property="og:type" content="${active === 'news' ? 'article' : 'website'}">
-<meta property="og:title" content="${esc(title)}">
-<meta property="og:description" content="${esc(description)}">
-<meta property="og:site_name" content="${esc(siteName)}">
-${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : ''}
-<link rel="alternate" type="application/rss+xml" title="${esc(siteName)}" href="/feed.xml">
+${headExtra}
+<link rel="alternate" type="application/rss+xml" title="${esc(siteName)}" href="${esc(absoluteUrl(baseUrl, '/feed.xml'))}">
+<link rel="sitemap" type="application/xml" title="Sitemap" href="${esc(absoluteUrl(baseUrl, '/sitemap.xml'))}">
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
@@ -232,8 +283,12 @@ ${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : '
 }
 
 // ---- 首页 ----
-siteRouter.get('/', (_req, res) => {
+siteRouter.get('/', (req, res) => {
   const settings = getSettings();
+  const baseUrl = siteBaseUrl(req, settings);
+  const siteName = siteCopy(settings, 'site_name');
+  const siteDescription = siteCopy(settings, 'site_description');
+  const logo = seoImageUrl(baseUrl, siteCopy(settings, 'site_logo').trim());
   const excludeProducts = ` AND (c.slug IS NULL OR c.slug != ?)`;
   const latest = db
     .prepare(`${PUBLISHED_SQL}${excludeProducts} ORDER BY a.published_at DESC LIMIT 5`)
@@ -248,7 +303,6 @@ siteRouter.get('/', (_req, res) => {
 
   const [featured, ...rest] = latest;
   const values = homeValueItems(settings);
-  const siteName = siteCopy(settings, 'site_name');
   const heroTitle = siteCopy(settings, 'hero_title').trim();
   const heroHeadline = heroTitle || siteName;
   const showHeroBrand = Boolean(heroTitle);
@@ -366,7 +420,20 @@ ${showCategories ? `
 </section>
 <script src="/scope.js" defer></script>`;
 
-  res.send(layout({ title: sitePageTitle(settings), settings, body, active: 'home' }));
+  res.send(
+    layout({
+      req,
+      title: sitePageTitle(settings),
+      settings,
+      body,
+      active: 'home',
+      canonicalPath: '/',
+      jsonLd: [
+        organizationJsonLd({ baseUrl, name: siteName, description: siteDescription, logo }),
+        websiteJsonLd({ baseUrl, name: siteName, description: siteDescription }),
+      ],
+    })
+  );
 });
 
 // ---- 新闻中心 ----
@@ -446,7 +513,25 @@ siteRouter.get('/news', (req, res) => {
   </nav>` : ''}
 </section>`;
 
-  res.send(layout({ title: sitePageTitle(settings, siteCopy(settings, 'nav_news')), settings, body, active: 'news' }));
+  const listParams = new URLSearchParams();
+  if (categorySlug) listParams.set('category', categorySlug);
+  if (tagSlug) listParams.set('tag', tagSlug);
+  if (page > 1) listParams.set('page', String(page));
+  const listQs = listParams.toString();
+  const canonicalPath = `/news${listQs ? `?${listQs}` : ''}`;
+  res.send(
+    layout({
+      req,
+      title: sitePageTitle(settings, siteCopy(settings, 'nav_news')),
+      settings,
+      body,
+      active: 'news',
+      canonicalPath,
+      noindex: Boolean(q || tagSlug),
+      prevUrl: page > 1 ? pageLink(page - 1) : undefined,
+      nextUrl: page < totalPages ? pageLink(page + 1) : undefined,
+    })
+  );
 });
 
 // ---- 文章详情 ----
@@ -459,9 +544,12 @@ siteRouter.get('/news/:slug', (req, res) => {
   if (!article) {
     res.status(404).send(
       layout({
+        req,
         title: sitePageTitle(settings, '页面不存在'),
         settings,
         active: 'news',
+        canonicalPath: req.path,
+        noindex: true,
         body: `<section class="page-head"><h1>404</h1><p class="empty">这篇文章不存在,或尚未发布。</p><p style="margin-top:24px"><a class="btn-primary" href="/news">返回${esc(siteCopy(settings, 'nav_news'))}</a></p></section>`,
       })
     );
@@ -519,14 +607,48 @@ ${related.length ? `
   </div>
 </section>` : ''}`;
 
+  const baseUrl = siteBaseUrl(req, settings);
+  const siteName = siteCopy(settings, 'site_name');
+  const canonicalPath = `/news/${article.slug}`;
+  const publisherLogo = seoImageUrl(baseUrl, siteCopy(settings, 'site_logo').trim());
+  const articleImage = seoImageUrl(baseUrl, article.cover_image);
+  const breadcrumbItems = [
+    { name: siteCopy(settings, 'nav_home'), path: '/' },
+    { name: siteCopy(settings, 'nav_news'), path: '/news' },
+    ...(article.category_name && article.category_slug
+      ? [{ name: article.category_name, path: `/news?category=${article.category_slug}` }]
+      : []),
+    { name: article.title },
+  ];
+
   res.send(
     layout({
+      req,
       title: sitePageTitle(settings, article.title),
       settings,
       body,
       active: 'news',
+      canonicalPath,
       description: article.summary || undefined,
       ogImage: article.cover_image || undefined,
+      ogType: 'article',
+      articlePublished: article.published_at,
+      articleModified: article.published_at,
+      jsonLd: [
+        articleJsonLd({
+          baseUrl,
+          canonicalPath,
+          headline: article.title,
+          description: article.summary || siteCopy(settings, 'site_description'),
+          image: articleImage,
+          datePublished: isoDateTime(article.published_at),
+          dateModified: isoDateTime(article.published_at),
+          authorName: article.author_name || undefined,
+          publisherName: siteName,
+          publisherLogo,
+        }),
+        breadcrumbJsonLd(baseUrl, breadcrumbItems),
+      ],
     })
   );
 });
@@ -593,7 +715,23 @@ siteRouter.get('/products', (req, res) => {
   </nav>` : ''}
 </section>`;
 
-  res.send(layout({ title: sitePageTitle(settings, pageTitle), settings, body, active: 'products' }));
+  const listParams = new URLSearchParams();
+  if (page > 1) listParams.set('page', String(page));
+  const listQs = listParams.toString();
+  const canonicalPath = `/products${listQs ? `?${listQs}` : ''}`;
+  res.send(
+    layout({
+      req,
+      title: sitePageTitle(settings, pageTitle),
+      settings,
+      body,
+      active: 'products',
+      canonicalPath,
+      noindex: Boolean(q),
+      prevUrl: page > 1 ? pageLink(page - 1) : undefined,
+      nextUrl: page < totalPages ? pageLink(page + 1) : undefined,
+    })
+  );
 });
 
 // ---- 联系我们 ----
@@ -637,13 +775,23 @@ siteRouter.get('/contact', (_req, res) => {
 </section>
 <script src="/contact.js" defer></script>`;
 
-  res.send(layout({ title: sitePageTitle(settings, pageTitle), settings, body, active: 'contact' }));
+  res.send(
+    layout({
+      req,
+      title: sitePageTitle(settings, pageTitle),
+      settings,
+      body,
+      active: 'contact',
+      canonicalPath: '/contact',
+      description: siteCopy(settings, 'contact_intro'),
+    })
+  );
 });
 
 // ---- RSS 订阅 ----
 siteRouter.get('/feed.xml', (req, res) => {
   const settings = getSettings();
-  const base = `${req.protocol}://${req.get('host')}`;
+  const base = siteBaseUrl(req, settings);
   const items = db
     .prepare(`${PUBLISHED_SQL} ORDER BY a.published_at DESC LIMIT 20`)
     .all() as unknown as ArticleRow[];
@@ -673,28 +821,40 @@ siteRouter.get('/feed.xml', (req, res) => {
 
 // ---- sitemap.xml ----
 siteRouter.get('/sitemap.xml', (req, res) => {
-  const base = `${req.protocol}://${req.get('host')}`;
+  const settings = getSettings();
+  const base = siteBaseUrl(req, settings);
+  const today = new Date().toISOString().slice(0, 10);
   const articles = db
     .prepare(`SELECT slug, updated_at FROM articles WHERE status = 'published' ORDER BY published_at DESC`)
     .all() as { slug: string; updated_at: string }[];
-  const urls = [
-    { loc: `${base}/`, priority: '1.0' },
-    { loc: `${base}/news`, priority: '0.8' },
-    { loc: `${base}/products`, priority: '0.8' },
-    { loc: `${base}/contact`, priority: '0.6' },
-    ...publishedCategories().map((c) => ({ loc: `${base}/news?category=${encodeURIComponent(c.slug)}`, priority: '0.6' })),
-    ...articles.map((a) => ({ loc: `${base}/news/${encodeURIComponent(a.slug)}`, priority: '0.7', lastmod: a.updated_at.slice(0, 10) })),
+  const urls: { loc: string; priority: string; changefreq: string; lastmod?: string }[] = [
+    { loc: `${base}/`, priority: '1.0', changefreq: 'weekly', lastmod: today },
+    { loc: `${base}/news`, priority: '0.9', changefreq: 'daily', lastmod: today },
+    { loc: `${base}/products`, priority: '0.8', changefreq: 'weekly', lastmod: today },
+    { loc: `${base}/contact`, priority: '0.6', changefreq: 'monthly' },
+    ...publishedCategories().map((c) => ({
+      loc: `${base}/news?category=${encodeURIComponent(c.slug)}`,
+      priority: '0.7',
+      changefreq: 'weekly',
+      lastmod: today,
+    })),
+    ...articles.map((a) => ({
+      loc: `${base}/news/${encodeURIComponent(a.slug)}`,
+      priority: '0.8',
+      changefreq: 'monthly',
+      lastmod: a.updated_at.slice(0, 10),
+    })),
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc>${'lastmod' in u && u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ''}<priority>${u.priority}</priority></url>`).join('\n')}
+${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ''}<changefreq>${u.changefreq}</changefreq><priority>${u.priority}</priority></url>`).join('\n')}
 </urlset>`;
   res.type('application/xml').send(xml);
 });
 
 // ---- robots.txt ----
 siteRouter.get('/robots.txt', (req, res) => {
-  const base = `${req.protocol}://${req.get('host')}`;
+  const base = siteBaseUrl(req, getSettings());
   res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /api/\nSitemap: ${base}/sitemap.xml\n`);
 });
 
@@ -707,9 +867,12 @@ siteRouter.use((req, res, next) => {
   const settings = getSettings();
   res.status(404).send(
     layout({
+      req,
       title: sitePageTitle(settings, '页面不存在'),
       settings,
       active: 'news',
+      canonicalPath: req.path,
+      noindex: true,
       body: `<section class="page-head"><h1>404</h1><p class="empty">您访问的页面不存在。</p><p style="margin-top:24px"><a class="btn-primary" href="/">返回${esc(siteCopy(settings, 'nav_home'))}</a></p></section>`,
     })
   );

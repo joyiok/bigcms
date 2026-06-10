@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "backup": "node scripts/backup.mjs",
-    "test": "node --import tsx --test tests/api.test.ts tests/brightdata.test.ts tests/qcc.test.ts"
+    "test": "node --import tsx --test tests/api.test.ts tests/brightdata.test.ts tests/qcc.test.ts tests/seo.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.79.1",
