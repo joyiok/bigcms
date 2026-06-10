@@ -214,6 +214,21 @@ interface OpenOptions {
   path?: string;
 }
 
+const KEEP_SESSIONS = 20;
+
+/** 自动清理:每用户只保留最近 N 个会话文件(当前会话除外),防止落盘历史无限增长 */
+async function pruneSessions(userId: number, keepPath?: string): Promise<void> {
+  try {
+    const list = await SessionManager.list(AGENT_DIR, userSessionDir(userId));
+    const sorted = [...list].sort((a, b) => b.modified.getTime() - a.modified.getTime());
+    for (const s of sorted.slice(KEEP_SESSIONS)) {
+      if (s.path !== keepPath) fs.rmSync(s.path, { force: true });
+    }
+  } catch {
+    /* 清理失败不影响主流程 */
+  }
+}
+
 async function createEntry(user: AuthUser, open?: OpenOptions): Promise<Entry> {
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
@@ -253,6 +268,8 @@ async function createEntry(user: AuthUser, open?: OpenOptions): Promise<Entry> {
         : SessionManager.continueRecent(AGENT_DIR, sessionDir),
     settingsManager,
   });
+
+  void pruneSessions(user.id, session.sessionManager.getSessionFile());
 
   return {
     session,

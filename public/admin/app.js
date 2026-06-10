@@ -1101,12 +1101,24 @@ pages.assistant = async () => {
       if (parts.length === 0) aiRenderParts(bubble, [{ type: 'text', text: '(无回复)' }]);
       else aiRenderParts(bubble, parts);
     } catch (err) {
-      // 流式中途断线(锁屏/网络抖动):稍候后重载页面,从落盘历史恢复已生成的部分
+      // 流式中途断线(锁屏/网络抖动):从落盘历史取回本轮已生成的部分,原地补全气泡
       if (!streamDone && parts.length) {
-        aiRenderParts(bubble, [...parts, { type: 'text', text: '⚠️ 连接中断,正在从历史恢复…' }]);
+        aiRenderParts(bubble, [...parts, { type: 'text', text: '⚠️ 连接中断,正在恢复…' }]);
         await new Promise((r) => setTimeout(r, 1500));
-        aiBusy = false;
-        pages.assistant();
+        try {
+          const h = await api('/assistant/history');
+          // 取末尾连续的 assistant 消息(一轮回复可能含多次工具往返)
+          const recovered = [];
+          for (let i = h.messages.length - 1; i >= 0 && h.messages[i].role === 'assistant'; i--) {
+            const m = h.messages[i];
+            const mParts = (m.tools || []).map((t) => ({ type: 'tool', name: t.name, args: t.args || '', done: true }));
+            if (m.text) mParts.push({ type: 'text', text: m.text });
+            recovered.unshift(...mParts);
+          }
+          aiRenderParts(bubble, recovered.length ? recovered : [...parts, { type: 'text', text: '⚠️ 连接中断' }]);
+        } catch {
+          aiRenderParts(bubble, [...parts, { type: 'text', text: '⚠️ 连接中断' }]);
+        }
         return;
       }
       aiRenderParts(bubble, [...parts, { type: 'text', text: `⚠️ ${err.message}` }]);
