@@ -1104,8 +1104,13 @@ pages.assistant = async () => {
       // 流式中途断线(锁屏/网络抖动):从落盘历史取回本轮已生成的部分,原地补全气泡
       if (!streamDone && parts.length) {
         aiRenderParts(bubble, [...parts, { type: 'text', text: '⚠️ 连接中断,正在恢复…' }]);
-        await new Promise((r) => setTimeout(r, 1500));
         try {
+          // 服务端断线后会继续生成完整回复,轮询等它结束(最多 2 分钟)再取全文
+          for (let i = 0; i < 60; i++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            const st = await api('/assistant/status').catch(() => null);
+            if (!st || !st.streaming) break;
+          }
           const h = await api('/assistant/history');
           // 取末尾连续的 assistant 消息(一轮回复可能含多次工具往返)
           const recovered = [];

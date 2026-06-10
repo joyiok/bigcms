@@ -298,7 +298,13 @@ export async function getAssistantEntry(user: AuthUser): Promise<Entry> {
       // 正在生成时不重建,避免打断进行中的回复
       if (entry.day === todayStr() || entry.session.isStreaming) return entry;
       sessions.delete(user.id);
+      // 跨天重建时续用同一个会话文件,而不是跳回"最近"的会话
+      const currentPath = entry.session.sessionManager.getSessionFile();
       entry.session.dispose();
+      const rebuilt = createEntry(user, currentPath ? { path: currentPath } : undefined);
+      rebuilt.catch(() => sessions.delete(user.id));
+      sessions.set(user.id, rebuilt);
+      return rebuilt;
     } catch {
       sessions.delete(user.id);
     }

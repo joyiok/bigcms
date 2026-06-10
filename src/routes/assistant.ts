@@ -33,8 +33,8 @@ function summarizeArgs(args: unknown): string {
 /** 助手可用性与当前模型 */
 assistantRouter.get('/status', async (req, res) => {
   try {
-    const { model } = await getAssistantEntry(req.user!);
-    res.json({ ready: true, model });
+    const { session, model } = await getAssistantEntry(req.user!);
+    res.json({ ready: true, model, streaming: session.isStreaming });
   } catch (err) {
     res.json({ ready: false, error: err instanceof Error ? err.message : String(err) });
   }
@@ -198,9 +198,13 @@ assistantRouter.post('/chat', async (req, res) => {
     }
   });
 
-  // 客户端断开时中止生成,避免空烧 token
+  // 客户端断开时不中止生成:让本轮完整生成并落盘,前端重连后从历史恢复全文。
+  // (用户主动点「停止」走 /abort 接口)
   res.on('close', () => {
-    if (!finished) void session.abort();
+    if (!finished) {
+      clearInterval(heartbeat);
+      unsubscribe();
+    }
   });
 
   try {
