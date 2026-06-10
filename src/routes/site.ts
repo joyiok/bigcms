@@ -724,7 +724,7 @@ siteRouter.get('/products', (req, res) => {
 });
 
 // ---- 联系我们 ----
-siteRouter.get('/contact', (_req, res) => {
+siteRouter.get('/contact', (req, res) => {
   const settings = getSettings();
   const pageTitle = siteCopy(settings, 'contact_title');
   const body = `
