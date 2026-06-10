@@ -8,13 +8,26 @@ export const SITE_COPY_DEFAULTS: Record<string, string> = {
   nav_home: '首页',
   nav_news: '新闻中心',
   hero_cta: '浏览最新动态',
+  hero_secondary_cta: '',
+  hero_secondary_href: '/contact',
+  hero_quick_title: '快速入口',
+  hero_image: '',
+  home_value_1: '',
+  home_value_2: '',
+  home_value_3: '',
+  home_about_title: '',
+  home_about_text: '',
   hero_notices_title: '公司要闻',
-  home_news_title: '最新动态',
+  home_news_title: '前沿洞察',
+  home_products_title: '产品',
+  home_products_more_link: '查看全部产品 →',
   home_categories_title: '栏目',
   home_more_link: '全部动态 →',
   cta_title: '继续关注最新动态',
   cta_text: '公司新闻、产品发布与技术文章,都沉淀在同一个新闻中心。',
   cta_button: '查看新闻中心',
+  cta_href: '/news',
+  contact_reply_hint: '',
   footer_categories_title: '栏目',
   footer_links_title: '快速入口',
   nav_products: '商品',
@@ -39,13 +52,26 @@ export const SITE_COPY_LABELS: Record<string, string> = {
   nav_home: '导航「首页」文案',
   nav_news: '导航「新闻中心」文案',
   hero_cta: '首页主按钮文案',
+  hero_secondary_cta: '首页次按钮文案(留空则用「联系我们」)',
+  hero_secondary_href: '首页次按钮链接',
+  hero_quick_title: '无要闻时右侧快速入口标题',
+  hero_image: '首页右侧主图 URL(媒体库地址,优先于快速入口)',
+  home_value_1: '首页能力点 1(留空不显示)',
+  home_value_2: '首页能力点 2',
+  home_value_3: '首页能力点 3',
+  home_about_title: '首页「关于」标题(留空不显示区块)',
+  home_about_text: '首页「关于」正文',
   hero_notices_title: '首页要闻侧栏标题',
-  home_news_title: '首页「最新动态」区块标题',
+  home_news_title: '首页「前沿洞察」区块标题',
+  home_products_title: '首页「产品」区块标题',
+  home_products_more_link: '首页「查看全部产品」链接',
   home_categories_title: '首页「栏目」区块标题',
   home_more_link: '首页「全部动态」链接文案',
   cta_title: '首页底部 CTA 标题',
   cta_text: '首页底部 CTA 描述',
   cta_button: '首页底部 CTA 按钮文案',
+  cta_href: '首页底部 CTA 按钮链接',
+  contact_reply_hint: '联系页回复时效说明(留空不显示)',
   footer_categories_title: '页脚栏目区标题',
   footer_links_title: '页脚快速入口区标题',
   nav_products: '导航「商品」文案',
@@ -65,6 +91,19 @@ export function siteCopy(settings: Record<string, string>, key: keyof typeof SIT
   return settings[key] ?? '';
 }
 
+export function homeValueItems(settings: Record<string, string>): string[] {
+  return (['home_value_1', 'home_value_2', 'home_value_3'] as const)
+    .map((k) => siteCopy(settings, k).trim())
+    .filter(Boolean);
+}
+
+export function siteHref(settings: Record<string, string>, key: string, fallback: string): string {
+  const href = siteCopy(settings, key).trim();
+  if (!href) return fallback;
+  if (href.startsWith('/') || href.startsWith('http://') || href.startsWith('https://')) return href;
+  return fallback;
+}
+
 export function sitePageTitle(settings: Record<string, string>, pageTitle?: string): string {
   const name = siteCopy(settings, 'site_name');
   if (pageTitle && name) return `${pageTitle} · ${name}`;
@@ -78,4 +117,5 @@ export function ensureSiteCopySettings(db: { prepare: (sql: string) => { get: (k
   for (const [key, value] of Object.entries(SITE_COPY_DEFAULTS)) {
     if (!get.get(key)) insert.run(key, value);
   }
+  db.prepare(`UPDATE settings SET value = ? WHERE key = 'home_news_title' AND value = '最新动态'`).run('前沿洞察');
 }

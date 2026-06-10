@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { articleSearchCondition, db } from '../db.js';
 import { renderMarkdown } from '../markdown.js';
-import { siteCopy, sitePageTitle } from '../site-copy.js';
+import { homeValueItems, siteCopy, siteHref, sitePageTitle } from '../site-copy.js';
 
 export const siteRouter = Router();
 
@@ -15,6 +15,84 @@ function getSettings(): Record<string, string> {
 }
 
 const fmtDate = (s: string | null) => (s ? s.slice(0, 10) : '');
+
+const PRODUCTS_CATEGORY_SLUG = 'products';
+
+function renderHeroAside(settings: Record<string, string>, notices: ArticleRow[]): string {
+  if (notices.length) {
+    return `<aside class="hero-panel">
+      <div class="panel-head"><span>${esc(siteCopy(settings, 'hero_notices_title'))}</span><a href="/news">更多 →</a></div>
+      ${notices
+        .map(
+          (a) => `
+      <a class="panel-row" href="/news/${esc(a.slug)}">
+        <span class="panel-date">${fmtDate(a.published_at)}</span>
+        <span class="panel-title">${esc(a.title)}</span>
+      </a>`
+        )
+        .join('')}
+    </aside>`;
+  }
+  const heroImage = siteCopy(settings, 'hero_image').trim();
+  if (heroImage) {
+    return `<aside class="hero-panel hero-visual"><img src="${esc(heroImage)}" alt="" class="hero-visual-img" loading="eager"></aside>`;
+  }
+  const quickTitle = siteCopy(settings, 'hero_quick_title') || siteCopy(settings, 'footer_links_title') || '快速入口';
+  const links: [string, string][] = [
+    ['/news', siteCopy(settings, 'nav_news')],
+    ['/products', siteCopy(settings, 'nav_products')],
+    ['/contact', siteCopy(settings, 'nav_contact')],
+  ];
+  return `<aside class="hero-panel hero-quick">
+    <div class="panel-head"><span>${esc(quickTitle)}</span></div>
+    <nav class="hero-quick-links" aria-label="${esc(quickTitle)}">
+      ${links
+        .map(
+          ([href, label]) =>
+            `<a class="hero-quick-link" href="${esc(href)}"><span>${esc(label)}</span><span class="hero-quick-arrow" aria-hidden="true">→</span></a>`
+        )
+        .join('')}
+    </nav>
+  </aside>`;
+}
+
+function renderProductSection(settings: Record<string, string>, products: ArticleRow[]): string {
+  if (!products.length) return '';
+  const [featured, ...rest] = products;
+  const title = siteCopy(settings, 'home_products_title');
+  const more = siteCopy(settings, 'home_products_more_link');
+  return `<section class="band-soft home-products">
+  <div class="section">
+    <h2 class="section-title">${esc(title)}</h2>
+    <div class="product-spread">
+      <a class="product-featured" href="/news/${esc(featured.slug)}">
+        <div class="product-featured-media">${cover(featured, 320)}</div>
+        <div class="product-featured-text">
+          <div class="meta-line">${fmtDate(featured.published_at)}</div>
+          <h3>${esc(featured.title)}</h3>
+          ${featured.summary ? `<p>${esc(featured.summary)}</p>` : ''}
+        </div>
+      </a>
+      ${rest.length ? `<div class="product-side">
+        ${rest
+          .map(
+            (a) => `
+        <a class="product-side-row" href="/news/${esc(a.slug)}">
+          <div class="product-side-thumb">${cover(a, 88)}</div>
+          <div class="product-side-main">
+            <span class="meta-line">${fmtDate(a.published_at)}</span>
+            <span class="product-side-title">${esc(a.title)}</span>
+          </div>
+          <span class="news-arrow" aria-hidden="true">→</span>
+        </a>`
+          )
+          .join('')}
+      </div>` : ''}
+    </div>
+    <a class="more-link" href="/products">${esc(more)}</a>
+  </div>
+</section>`;
+}
 
 /** 无封面文章的等高线插图(由文章 id 决定形态,确定性生成) */
 function waveSvg(seed: number, height = 220): string {
@@ -151,11 +229,25 @@ ${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : '
 // ---- 首页 ----
 siteRouter.get('/', (_req, res) => {
   const settings = getSettings();
-  const latest = db.prepare(`${PUBLISHED_SQL} ORDER BY a.published_at DESC LIMIT 5`).all() as unknown as ArticleRow[];
-  const notices = db.prepare(`${PUBLISHED_SQL} ORDER BY a.published_at DESC LIMIT 4`).all() as unknown as ArticleRow[];
+  const excludeProducts = ` AND (c.slug IS NULL OR c.slug != ?)`;
+  const latest = db
+    .prepare(`${PUBLISHED_SQL}${excludeProducts} ORDER BY a.published_at DESC LIMIT 5`)
+    .all(PRODUCTS_CATEGORY_SLUG) as unknown as ArticleRow[];
+  const notices = db
+    .prepare(`${PUBLISHED_SQL}${excludeProducts} ORDER BY a.published_at DESC LIMIT 4`)
+    .all(PRODUCTS_CATEGORY_SLUG) as unknown as ArticleRow[];
+  const products = db
+    .prepare(`${PUBLISHED_SQL} AND c.slug = ? ORDER BY a.published_at DESC LIMIT 4`)
+    .all(PRODUCTS_CATEGORY_SLUG) as unknown as ArticleRow[];
   const categories = publishedCategories();
 
   const [featured, ...rest] = latest;
+  const values = homeValueItems(settings);
+  const secondaryCta = siteCopy(settings, 'hero_secondary_cta').trim() || siteCopy(settings, 'nav_contact');
+  const secondaryHref = siteHref(settings, 'hero_secondary_href', '/contact');
+  const aboutTitle = siteCopy(settings, 'home_about_title').trim();
+  const aboutText = siteCopy(settings, 'home_about_text').trim();
+  const showCategories = categories.length >= 2;
 
   const body = `
 <section class="hero">
@@ -164,24 +256,18 @@ siteRouter.get('/', (_req, res) => {
     <div class="hero-copy">
       <h1>${esc(siteCopy(settings, 'site_name'))}</h1>
       <p class="hero-sub">${esc(siteCopy(settings, 'site_description'))}</p>
+      ${values.length ? `<ul class="hero-values">${values.map((v) => `<li>${esc(v)}</li>`).join('')}</ul>` : ''}
       <div class="hero-actions">
         <a class="btn-primary" href="/news">${esc(siteCopy(settings, 'hero_cta'))}</a>
+        <a class="btn-secondary" href="${esc(secondaryHref)}">${esc(secondaryCta)}</a>
       </div>
     </div>
-    ${notices.length ? `
-    <aside class="hero-panel">
-      <div class="panel-head"><span>${esc(siteCopy(settings, 'hero_notices_title'))}</span><a href="/news">更多 →</a></div>
-      ${notices.map((a) => `
-      <a class="panel-row" href="/news/${esc(a.slug)}">
-        <span class="panel-date">${fmtDate(a.published_at)}</span>
-        <span class="panel-title">${esc(a.title)}</span>
-      </a>`).join('')}
-    </aside>` : ''}
+    ${renderHeroAside(settings, notices)}
   </div>
 </section>
 
 ${featured ? `
-<section class="section">
+<section class="section home-insights">
   <h2 class="section-title">${esc(siteCopy(settings, 'home_news_title'))}</h2>
   <div class="news-spread">
     <a class="featured" href="/news/${esc(featured.slug)}">
@@ -193,29 +279,47 @@ ${featured ? `
       </div>
     </a>
     <div class="news-side">
-      ${rest.map((a) => `
+      ${rest
+        .map(
+          (a) => `
       <a class="news-row" href="/news/${esc(a.slug)}">
         <span class="news-date">${fmtDate(a.published_at)}</span>
         <span class="news-title">${esc(a.title)}</span>
         <span class="news-arrow">→</span>
-      </a>`).join('') || '<p class="empty">更多内容筹备中。</p>'}
+      </a>`
+        )
+        .join('')}
       <a class="more-link" href="/news">${esc(siteCopy(settings, 'home_more_link'))}</a>
     </div>
   </div>
-</section>` : `
-<section class="section"><h2 class="section-title">${esc(siteCopy(settings, 'home_news_title'))}</h2><p class="empty">内容筹备中,敬请期待。</p></section>`}
+</section>` : ''}
 
-${categories.length ? `
-<section class="band-soft">
+${renderProductSection(settings, products)}
+
+${aboutTitle || aboutText ? `
+<section class="home-about">
+  <div class="section home-about-inner">
+    ${aboutTitle ? `<h2>${esc(aboutTitle)}</h2>` : ''}
+    ${aboutText ? `<p class="home-about-text">${esc(aboutText)}</p>` : ''}
+    <a class="btn-primary" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
+  </div>
+</section>` : ''}
+
+${showCategories ? `
+<section class="band-soft home-categories">
   <div class="section">
     <h2 class="section-title">${esc(siteCopy(settings, 'home_categories_title'))}</h2>
     <div class="cat-list">
-      ${categories.map((c) => `
+      ${categories
+        .map(
+          (c) => `
       <a class="cat-item" href="/news?category=${esc(c.slug)}">
         <span class="cat-top"><span class="cat-name">${esc(c.name)}</span><span class="cat-arrow">↗</span></span>
         <span class="cat-desc">${esc(c.description)}</span>
         <span class="cat-count">${c.n} 篇内容</span>
-      </a>`).join('')}
+      </a>`
+        )
+        .join('')}
     </div>
   </div>
 </section>` : ''}
@@ -223,7 +327,7 @@ ${categories.length ? `
 <section class="cta-band">
   <h2>${esc(siteCopy(settings, 'cta_title'))}</h2>
   <p>${esc(siteCopy(settings, 'cta_text'))}</p>
-  <a class="btn-light" href="/news">${esc(siteCopy(settings, 'cta_button'))}</a>
+  <a class="btn-light" href="${esc(siteHref(settings, 'cta_href', '/news'))}">${esc(siteCopy(settings, 'cta_button'))}</a>
 </section>
 <script src="/scope.js" defer></script>`;
 
@@ -443,7 +547,10 @@ siteRouter.get('/products', (req, res) => {
       </div>
       <div class="row-thumb">${cover(a, 140)}</div>
     </a>`).join('')}
-  </div>` : `<p class="empty">${q ? '没有找到相关内容,换个关键词试试。' : '暂无商品内容,敬请期待。'}</p>`}
+  </div>` : `<div class="empty-panel">
+    <p class="empty">${q ? '没有找到相关内容,换个关键词试试。' : '暂无已发布的产品介绍。'}</p>
+    ${q ? '' : `<a class="btn-primary" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>`}
+  </div>`}
   ${totalPages > 1 ? `<nav class="pager" aria-label="分页">
     ${page > 1 ? `<a href="${pageLink(page - 1)}">← 上一页</a>` : '<span></span>'}
     <span class="pager-info">${page} / ${totalPages}</span>
@@ -488,6 +595,7 @@ siteRouter.get('/contact', (_req, res) => {
       <span>${esc(siteCopy(settings, 'contact_message_label'))} *</span>
       <textarea name="message" required maxlength="2000" rows="6"></textarea>
     </label>
+    ${siteCopy(settings, 'contact_reply_hint') ? `<p class="contact-hint">${esc(siteCopy(settings, 'contact_reply_hint'))}</p>` : ''}
     <p id="contact-msg" class="contact-msg" hidden></p>
     <button type="submit" class="btn-primary">${esc(siteCopy(settings, 'contact_submit'))}</button>
   </form>

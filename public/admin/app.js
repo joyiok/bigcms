@@ -611,13 +611,25 @@ pages.settings = async () => {
     ['nav_home', '导航「首页」'],
     ['nav_news', '导航「新闻中心」'],
     ['hero_cta', '首页主按钮'],
+    ['hero_secondary_cta', '首页次按钮(留空=联系我们)'],
+    ['hero_secondary_href', '首页次按钮链接'],
+    ['hero_quick_title', '快速入口标题'],
+    ['hero_image', '首页右侧主图 URL'],
+    ['home_value_1', '能力点 1'],
+    ['home_value_2', '能力点 2'],
+    ['home_value_3', '能力点 3'],
+    ['home_about_title', '关于区块标题'],
+    ['home_about_text', '关于区块正文'],
     ['hero_notices_title', '要闻侧栏标题'],
-    ['home_news_title', '「最新动态」标题'],
+    ['home_news_title', '「前沿洞察」标题'],
+    ['home_products_title', '「产品」标题'],
+    ['home_products_more_link', '「查看全部产品」链接'],
     ['home_categories_title', '「栏目」标题'],
     ['home_more_link', '「全部动态」链接'],
     ['cta_title', '底部 CTA 标题'],
     ['cta_text', '底部 CTA 描述'],
     ['cta_button', '底部 CTA 按钮'],
+    ['cta_href', '底部 CTA 链接'],
         ['footer_categories_title', '页脚栏目标题'],
     ['footer_links_title', '页脚快速入口标题'],
     ['nav_products', '导航「商品」'],
@@ -631,6 +643,7 @@ pages.settings = async () => {
     ['contact_message_label', '表单「留言」'],
     ['contact_submit', '联系表单提交按钮'],
     ['contact_success', '联系表单成功提示'],
+    ['contact_reply_hint', '联系页回复说明'],
   ];
   const AI_PROVIDERS = [
     ['', '自动(环境变量 / pi CLI)'],
@@ -679,6 +692,36 @@ pages.settings = async () => {
           ${s.ai_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="ai_api_key_clear" value="1"> 清除已保存的 API Key</label>' : ''}
         </div>
       </section>
+      <section class="card settings-card">
+        <div class="settings-section-title">
+          <h3>Bright Data</h3>
+          <span class="badge ${s.brightdata_api_key_set === '1' ? 'active' : 'disabled'}">${s.brightdata_api_key_set === '1' ? 'SERP 已配置' : 'SERP 未配置'}</span>
+          <span class="badge ${s.brightdata_browser_password_set === '1' ? 'active' : 'disabled'}">${s.brightdata_browser_password_set === '1' ? 'Browser 已配置' : 'Browser 未配置'}</span>
+        </div>
+        <p class="field-help" style="margin-bottom:12px">为 AI 助手提供 <code>web_search</code>(SERP API) 与 <code>browse_webpage</code>(Scraping Browser)。凭证见 <a href="https://docs.brightdata.com/scraping-automation/serp-api/introduction" target="_blank" rel="noopener">SERP 文档</a> / <a href="https://docs.brightdata.com/scraping-automation/scraping-browser/introduction" target="_blank" rel="noopener">Browser 文档</a>。</p>
+        <div class="form-grid">
+          <div class="form-row"><label>SERP API Key</label>
+            <input type="password" name="brightdata_api_key" autocomplete="off" placeholder="${s.brightdata_api_key_set === '1' ? '已保存,留空不修改' : 'Bearer Token'}">
+          </div>
+          <div class="form-row"><label>SERP Zone 名称</label>
+            <input name="brightdata_serp_zone" value="${esc(s.brightdata_serp_zone || '')}" placeholder="创建 SERP API 时的 zone 名">
+          </div>
+          <div class="form-cols">
+            <div class="form-row"><label>Account ID</label>
+              <input name="brightdata_customer_id" value="${esc(s.brightdata_customer_id || '')}" placeholder="hl_xxxxxx">
+            </div>
+            <div class="form-row"><label>Browser Zone 名称</label>
+              <input name="brightdata_browser_zone" value="${esc(s.brightdata_browser_zone || '')}" placeholder="scraping_browser 区名">
+            </div>
+          </div>
+          <div class="form-row"><label>Browser 密码</label>
+            <input type="password" name="brightdata_browser_password" autocomplete="off" placeholder="${s.brightdata_browser_password_set === '1' ? '已保存,留空不修改' : 'Access Details 中的密码'}">
+            <p class="field-help">用户名格式为 <code>brd-customer-&lt;Account ID&gt;-zone-&lt;Zone&gt;</code>,也可改用环境变量 <code>BRIGHTDATA_BROWSER_AUTH=user:pass</code>。</p>
+          </div>
+          ${s.brightdata_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_api_key_clear" value="1"> 清除 SERP API Key</label>' : ''}
+          ${s.brightdata_browser_password_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_browser_password_clear" value="1"> 清除 Browser 密码</label>' : ''}
+        </div>
+      </section>
       <div class="form-actions settings-actions"><button type="submit" class="btn primary">保存设置</button></div>
     </form>`;
   $('#settings-form').onsubmit = async (e) => {
@@ -701,6 +744,7 @@ const AI_TOOL_LABELS = {
   list_users: '查询用户', create_user: '新建用户', update_user: '更新用户', delete_user: '删除用户',
   list_audit_logs: '查询审计日志', list_article_revisions: '查询修订历史', restore_article_revision: '恢复修订版本',
   list_contacts: '查询联系人', update_contact: '更新联系人', delete_contact: '删除联系人',
+  web_search: '搜索引擎检索', browse_webpage: '浏览器抓取网页',
 };
 
 const AI_SUGGESTIONS = [

@@ -229,6 +229,35 @@ test('安全响应头:页面带 CSP/nosniff,上传文件沙箱化', async () => 
   assert.equal(file.headers.get('content-security-policy'), 'sandbox');
 });
 
+test('站点设置:Bright Data 密钥只返回已配置标记', async () => {
+  const saved = await api('/api/settings', {
+    method: 'PUT',
+    token: adminToken,
+    body: {
+      brightdata_serp_zone: 'my_serp',
+      brightdata_customer_id: 'hl_test',
+      brightdata_browser_zone: 'browser1',
+      brightdata_api_key: 'bd-secret',
+      brightdata_browser_password: 'browser-secret',
+    },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.brightdata_serp_zone, 'my_serp');
+  assert.equal(saved.data.brightdata_api_key_set, '1');
+  assert.equal(saved.data.brightdata_browser_password_set, '1');
+  assert.equal(saved.data.brightdata_api_key, undefined);
+  assert.equal(saved.data.brightdata_browser_password, undefined);
+
+  const cleared = await api('/api/settings', {
+    method: 'PUT',
+    token: adminToken,
+    body: { brightdata_api_key_clear: '1', brightdata_browser_password_clear: '1' },
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.data.brightdata_api_key_set, '');
+  assert.equal(cleared.data.brightdata_browser_password_set, '');
+});
+
 test('联系表单:前台可提交,后台可查看与管理', async () => {
   const bad = await api('/api/public/contact', { method: 'POST', body: { name: '测试' } });
   assert.equal(bad.status, 400);

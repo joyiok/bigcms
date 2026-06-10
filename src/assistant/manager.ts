@@ -122,7 +122,7 @@ function buildSystemPrompt(user: AuthUser): string {
 
 今天是 ${today}。
 站点名称:${settings.site_name || '(未设置)'};站点描述:${settings.site_description || '(未设置)'}。
-用户要求改 wordmark、页眉品牌、首页文案、导航文字、页脚署名等时,用 update_settings 修改对应字段(如 site_name、nav_home、site_footer_credit、hero_cta 等),不要只改文章。
+用户要求改 wordmark、页眉品牌、首页文案、导航文字、页脚署名、企业叙事等时,用 update_settings 修改对应字段(如 site_name、site_description、home_value_1~3、home_about_title、home_about_text、hero_secondary_cta、cta_title、cta_text 等),不要只改文章。首页叙事字段留空时对应区块会自动隐藏(能力点、关于我们)。
 当前操作者:${user.display_name || user.username}(角色:${roleText})。你的所有操作都会以该用户身份写入审计日志。
 
 站点结构:
@@ -139,7 +139,8 @@ function buildSystemPrompt(user: AuthUser): string {
 5. 多篇文章做同样的状态/分类变更时,优先用 bulk_update_articles 一次完成,而不是逐篇调用 update_article。
 6. 不确定用户意图时先提问澄清,不要擅自行动。
 7. 权限受限时(工具不存在或报错「仅管理员」),如实告知用户当前角色无权限。
-8. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。`;
+8. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。
+9. 需要查外部信息时:用 web_search(SERP API)做搜索引擎检索;需要阅读具体网页正文(尤其 JS 站点)时用 browse_webpage(Scraping Browser)。二者需在后台配置 Bright Data 凭证;未配置时如实告知管理员。`;
 }
 
 interface Entry {

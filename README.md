@@ -70,6 +70,12 @@ docker run -d -p 3000:3000 \
 | `ANTHROPIC_API_KEY` 等 | - | 其他模型提供商凭证(任一 Pi 支持的提供商;也可复用 pi CLI 登录的 `~/.pi/agent/auth.json`) |
 | `AI_PROVIDER` / `AI_MODEL` | 自动选择 | 指定 AI 助手使用的模型,如 `deepseek` + `deepseek-v4-pro`;只设 `AI_MODEL` 时自动在可用提供商中匹配 |
 | `AI_THINKING` | `off` | AI 助手思考强度:`off` / `minimal` / `low` / `medium` / `high` / `xhigh`(DeepSeek 上有效档位为 `high` / `xhigh`,对应官方 thinking high / max) |
+| `BRIGHTDATA_API_KEY` | - | [Bright Data SERP API](https://docs.brightdata.com/scraping-automation/serp-api/introduction) Bearer Token;也可在后台填写 |
+| `BRIGHTDATA_SERP_ZONE` | - | SERP API 的 zone 名称 |
+| `BRIGHTDATA_CUSTOMER_ID` | - | 账号 ID(如 `hl_xxxxxx`),用于拼接 Scraping Browser 用户名 |
+| `BRIGHTDATA_BROWSER_ZONE` | - | [Scraping Browser](https://docs.brightdata.com/scraping-automation/scraping-browser/introduction) zone 名称 |
+| `BRIGHTDATA_BROWSER_PASSWORD` | - | Browser zone 密码 |
+| `BRIGHTDATA_BROWSER_AUTH` | - | 可选,直接填完整 `brd-customer-…-zone-…:password`,优先级高于上面三项 |
 
 ## AI 助手
 
@@ -94,6 +100,15 @@ docker run -d -p 3000:3000 \
 - 权限:编辑及以上可用;站点设置、用户管理、审计日志等工具仅管理员会话可见;只读账号不可用
 - 安全:agent 只能调用内置的 CMS 工具(无 shell/文件访问);删除与批量操作会先向你确认;所有写操作以 `ai:` 前缀写入审计日志
 - 体验:工具调用实时显示(悬停可看参数);回复过程中可随时点「停止」;每轮回复后显示 token 用量与成本;会话上下文带有当天日期与站点信息
+
+### Bright Data 网页检索(可选)
+
+在「站点设置 → Bright Data」配置后,AI 助手可使用:
+
+- `web_search` — 经 [SERP API](https://docs.brightdata.com/scraping-automation/serp-api/introduction) 获取 Google/Bing 等结构化搜索结果(`parsed_light` 默认返回前 10 条有机结果)
+- `browse_webpage` — 经 [Scraping Browser](https://docs.brightdata.com/scraping-automation/scraping-browser/introduction) 打开 URL 并提取渲染后的页面正文(基于 `puppeteer-core` 连接 `wss://…@brd.superproxy.io:9222`)
+
+示例:「搜一下竞品最近的新闻」/「打开这个链接总结正文」。
 
 ## API 概览
 

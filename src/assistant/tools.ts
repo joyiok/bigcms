@@ -10,6 +10,7 @@ import { hashPassword } from '../password.js';
 import type { AuthUser } from '../auth.js';
 import { getSafeSettings } from '../settings.js';
 import { SITE_COPY_DEFAULTS, SITE_COPY_LABELS } from '../site-copy.js';
+import { browsePage, serpSearch } from '../brightdata.js';
 
 /** 工具返回:把数据序列化为 JSON 文本交给模型 */
 function ok(data: unknown) {
@@ -834,6 +835,57 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
             .prepare(`SELECT * FROM audit_logs${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
             .all(...params, pageSize, (page - 1) * pageSize);
           return ok({ items, total, page, page_size: pageSize });
+        },
+      })
+    );
+  }
+
+  // ---- Bright Data 网页检索(编辑及以上) ----
+  if (user.role !== 'viewer') {
+    tools.push(
+      defineTool({
+        name: 'web_search',
+        label: '搜索引擎检索',
+        description:
+          '通过 Bright Data SERP API 获取 Google/Bing/DuckDuckGo 结构化搜索结果,用于竞品调研、事实核查、SEO 参考。需先在后台配置 Bright Data API Key 与 SERP Zone。',
+        parameters: Type.Object({
+          query: Type.String({ description: '搜索关键词(必填)' }),
+          engine: Type.Optional(Type.String({ description: 'google / bing / duckduckgo,默认 google' })),
+          hl: Type.Optional(Type.String({ description: '界面语言,默认 zh-CN' })),
+          gl: Type.Optional(Type.String({ description: '地区,默认 cn(Google)' })),
+          data_format: Type.Optional(
+            Type.String({ description: 'parsed_light(默认,前 10 条有机结果) / json / markdown' })
+          ),
+        }),
+        execute: async (_id, p) => {
+          const engine = (p.engine ?? 'google') as 'google' | 'bing' | 'duckduckgo';
+          if (!['google', 'bing', 'duckduckgo'].includes(engine)) throw new Error('engine 无效');
+          const dataFormat = (p.data_format ?? 'parsed_light') as 'parsed_light' | 'markdown' | 'json';
+          if (!['parsed_light', 'markdown', 'json'].includes(dataFormat)) throw new Error('data_format 无效');
+          const data = await serpSearch({
+            query: p.query,
+            engine,
+            hl: p.hl,
+            gl: p.gl,
+            dataFormat,
+          });
+          auditAi(user, 'web_search', '', `${engine}:${p.query.slice(0, 80)}`);
+          return ok({ query: p.query, engine, data });
+        },
+      }),
+      defineTool({
+        name: 'browse_webpage',
+        label: '浏览器抓取网页',
+        description:
+          '通过 Bright Data Scraping Browser 打开 URL 并提取页面标题与正文(适合 JS 渲染站点)。需配置 Browser Zone 凭证。仅用于合法公开信息采集,勿抓取用户隐私或违反目标站条款。',
+        parameters: Type.Object({
+          url: Type.String({ description: '要打开的 https 页面 URL(必填)' }),
+          max_chars: Type.Optional(Type.Number({ description: '返回正文最大字符数,默认 12000' })),
+        }),
+        execute: async (_id, p) => {
+          const data = await browsePage({ url: p.url, maxChars: p.max_chars });
+          auditAi(user, 'browse_webpage', '', p.url.slice(0, 200));
+          return ok(data);
         },
       })
     );
