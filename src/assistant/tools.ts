@@ -12,6 +12,8 @@ import { getSafeSettings } from '../settings.js';
 import { SITE_COPY_DEFAULTS, SITE_COPY_LABELS } from '../site-copy.js';
 import { browsePage, serpSearch } from '../brightdata.js';
 import { qccFuzzySearch } from '../qcc.js';
+import * as headlessBrowser from '../browser.js';
+import crypto from 'node:crypto';
 
 /** 工具返回:把数据序列化为 JSON 文本交给模型 */
 function ok(data: unknown) {
@@ -64,6 +66,36 @@ function setTagsByNames(articleId: number, tagNames: string[] | undefined): void
 }
 
 const STATUS_VALUES = ['draft', 'published', 'archived'];
+
+/** 把二进制内容(截图/PDF)存进媒体库,返回媒体记录(含前台 url);PNG 顺带生成缩略图 */
+async function saveBufferToMedia(
+  buf: Buffer,
+  originalName: string,
+  mimeType: string,
+  uploaderId: number
+): Promise<{ id: number; url: string; thumb_url: string | null; size: number }> {
+  const ext = mimeType === 'application/pdf' ? '.pdf' : '.png';
+  const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  fs.writeFileSync(path.join(config.uploadDir, filename), buf);
+  let thumbFilename: string | null = null;
+  if (mimeType === 'image/png') {
+    try {
+      const sharp = (await import('sharp')).default;
+      const candidate = `${filename}.thumb.webp`;
+      await sharp(path.join(config.uploadDir, filename))
+        .resize({ width: 640, withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toFile(path.join(config.uploadDir, candidate));
+      thumbFilename = candidate;
+    } catch {
+      /* sharp 不可用时无缩略图 */
+    }
+  }
+  const id = db
+    .prepare(`INSERT INTO media (filename, original_name, mime_type, size, thumb_filename, uploader_id) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(filename, originalName, mimeType, buf.length, thumbFilename, uploaderId).lastInsertRowid as number;
+  return { id, url: `/uploads/${filename}`, thumb_url: thumbFilename ? `/uploads/${thumbFilename}` : null, size: buf.length };
+}
 
 export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
@@ -1021,6 +1053,145 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           const data = await browsePage({ url: p.url, maxChars: p.max_chars });
           auditAi(user, 'browse_webpage', '', p.url.slice(0, 200));
           return ok(data);
+        },
+      }),
+      defineTool({
+        name: 'browser_open',
+        label: '浏览器打开页面',
+        description:
+          '在共享无头浏览器里打开 URL(交互式浏览入口)。不传 tab_id 新开标签页,传则在该标签页导航。返回 tab_id 与页面标题/正文,后续可用 browser_interact / browser_evaluate / browser_screenshot 等继续操作同一标签页;Cookie 落盘持久,登录态跨重启保留。block_resources=true 屏蔽图片/媒体/字体以提速。',
+        parameters: Type.Object({
+          url: Type.String({ description: '要打开的 http/https URL' }),
+          tab_id: Type.Optional(Type.String({ description: '复用已有标签页' })),
+          block_resources: Type.Optional(Type.Boolean({ description: '屏蔽图片/媒体/字体,默认 false' })),
+        }),
+        execute: async (_id, p) => {
+          const state = await headlessBrowser.openTab({ url: p.url, tabId: p.tab_id, blockResources: p.block_resources });
+          auditAi(user, 'browser_open', `tab:${state.tab_id}`, p.url.slice(0, 200));
+          return ok(state);
+        },
+      }),
+      defineTool({
+        name: 'browser_interact',
+        label: '浏览器交互操作',
+        description:
+          '在已打开的标签页上按顺序执行交互动作:click(点击 selector)、fill(向 selector 输入 text,先清空)、select(下拉选 value)、press(按键如 Enter)、wait(等待 ms 毫秒)、wait_for(等待 selector 出现)。可用于填表单、翻页、模拟登录等。返回执行后的页面状态。',
+        parameters: Type.Object({
+          tab_id: Type.String({ description: 'browser_open 返回的标签页 ID' }),
+          actions: Type.Array(
+            Type.Object({
+              type: Type.String({ description: 'click | fill | select | press | wait | wait_for' }),
+              selector: Type.Optional(Type.String({ description: 'CSS 选择器(click/fill/select/wait_for)' })),
+              text: Type.Optional(Type.String({ description: '输入文本(fill)' })),
+              value: Type.Optional(Type.String({ description: '选项值(select)' })),
+              key: Type.Optional(Type.String({ description: '按键名(press),如 Enter' })),
+              ms: Type.Optional(Type.Number({ description: '等待毫秒数(wait),上限 30000' })),
+            }),
+            { description: '按顺序执行的动作列表' }
+          ),
+        }),
+        execute: async (_id, p) => {
+          const state = await headlessBrowser.interact(p.tab_id, p.actions as headlessBrowser.BrowserAction[]);
+          auditAi(user, 'browser_interact', `tab:${p.tab_id}`, p.actions.map((a: { type: string }) => a.type).join(','));
+          return ok(state);
+        },
+      }),
+      defineTool({
+        name: 'browser_evaluate',
+        label: '浏览器执行脚本',
+        description:
+          '在已打开的标签页里执行自定义 JS(脚本体,需用 return 返回 JSON 可序列化结果,支持 await)。适合按选择器精确提取结构化数据,如 return [...document.querySelectorAll(".item")].map(e => e.textContent)。返回结果上限 50KB。',
+        parameters: Type.Object({
+          tab_id: Type.String({ description: '标签页 ID' }),
+          script: Type.String({ description: 'JS 脚本体(函数内部代码,用 return 返回结果)' }),
+        }),
+        execute: async (_id, p) => {
+          const result = await headlessBrowser.evaluateScript(p.tab_id, p.script);
+          auditAi(user, 'browser_evaluate', `tab:${p.tab_id}`, p.script.slice(0, 200));
+          return ok({ result });
+        },
+      }),
+      defineTool({
+        name: 'browser_screenshot',
+        label: '网页截图',
+        description:
+          '截图并存入媒体库,返回媒体 ID 与 url(可直接用作文章封面/插图)。传 tab_id 截已打开的标签页,或只传 url 一次性打开截完即关。full_page=true 截整页长图。',
+        parameters: Type.Object({
+          tab_id: Type.Optional(Type.String({ description: '已打开的标签页 ID' })),
+          url: Type.Optional(Type.String({ description: '一次性截图的页面 URL(与 tab_id 二选一)' })),
+          full_page: Type.Optional(Type.Boolean({ description: '截整页长图,默认只截可视区域' })),
+          name: Type.Optional(Type.String({ description: '存入媒体库的文件名(不含扩展名)' })),
+        }),
+        execute: async (_id, p) => {
+          const buf = await headlessBrowser.screenshot({ tabId: p.tab_id, url: p.url, fullPage: p.full_page });
+          const media = await saveBufferToMedia(buf, `${p.name || '网页截图'}.png`, 'image/png', user.id);
+          auditAi(user, 'browser_screenshot', `media:${media.id}`, (p.url || p.tab_id || '').slice(0, 200));
+          return ok(media);
+        },
+      }),
+      defineTool({
+        name: 'browser_pdf',
+        label: '网页导出 PDF',
+        description: '把页面导出为 A4 PDF 并存入媒体库,返回媒体 ID 与 url。传 tab_id 或 url(二选一)。',
+        parameters: Type.Object({
+          tab_id: Type.Optional(Type.String({ description: '已打开的标签页 ID' })),
+          url: Type.Optional(Type.String({ description: '一次性导出的页面 URL' })),
+          name: Type.Optional(Type.String({ description: '存入媒体库的文件名(不含扩展名)' })),
+        }),
+        execute: async (_id, p) => {
+          const buf = await headlessBrowser.pagePdf({ tabId: p.tab_id, url: p.url });
+          const media = await saveBufferToMedia(buf, `${p.name || '网页导出'}.pdf`, 'application/pdf', user.id);
+          auditAi(user, 'browser_pdf', `media:${media.id}`, (p.url || p.tab_id || '').slice(0, 200));
+          return ok(media);
+        },
+      }),
+      defineTool({
+        name: 'browser_tabs',
+        label: '浏览器标签页管理',
+        description: '管理共享浏览器的标签页:list 列出全部(tab_id、标题、URL);close 关闭指定标签页(需 tab_id)。上限 5 个,空闲 10 分钟自动回收。',
+        parameters: Type.Object({
+          action: Type.String({ description: 'list | close' }),
+          tab_id: Type.Optional(Type.String({ description: '要关闭的标签页 ID(close)' })),
+        }),
+        execute: async (_id, p) => {
+          if (p.action === 'close') {
+            if (!p.tab_id) throw new Error('close 需提供 tab_id');
+            await headlessBrowser.closeTab(p.tab_id);
+            auditAi(user, 'browser_tabs', `tab:${p.tab_id}`, 'close');
+            return ok({ ok: true });
+          }
+          return ok({ tabs: await headlessBrowser.listTabs() });
+        },
+      }),
+      defineTool({
+        name: 'browser_cookies',
+        label: '浏览器 Cookie 管理',
+        description:
+          'Cookie/登录态管理:get 读取某标签页站点的 cookie(需 tab_id);set 写入 cookie(需 cookies 数组,元素含 name/value/domain 等);clear 清空整个浏览器档案的全部 cookie(退出所有登录态)。Cookie 落盘持久,跨重启保留。',
+        parameters: Type.Object({
+          action: Type.String({ description: 'get | set | clear' }),
+          tab_id: Type.Optional(Type.String({ description: '标签页 ID(get 必填,set 可选)' })),
+          cookies: Type.Optional(
+            Type.Array(
+              Type.Object({
+                name: Type.String(),
+                value: Type.String(),
+                domain: Type.Optional(Type.String()),
+                path: Type.Optional(Type.String()),
+                expires: Type.Optional(Type.Number()),
+                httpOnly: Type.Optional(Type.Boolean()),
+                secure: Type.Optional(Type.Boolean()),
+              }),
+              { description: '要写入的 cookie 列表(set)' }
+            )
+          ),
+        }),
+        execute: async (_id, p) => {
+          const action = p.action as 'get' | 'set' | 'clear';
+          if (!['get', 'set', 'clear'].includes(action)) throw new Error('action 须为 get / set / clear');
+          const result = await headlessBrowser.manageCookies(action, { tabId: p.tab_id, cookies: p.cookies });
+          auditAi(user, 'browser_cookies', p.tab_id ? `tab:${p.tab_id}` : '', action);
+          return ok(result);
         },
       }),
       defineTool({
