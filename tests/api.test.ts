@@ -258,6 +258,22 @@ test('站点设置:Bright Data 密钥只返回已配置标记', async () => {
   assert.equal(cleared.data.brightdata_browser_password_set, '');
 });
 
+test('站点设置:企查查 SecretKey 只返回已配置标记', async () => {
+  const saved = await api('/api/settings', {
+    method: 'PUT',
+    token: adminToken,
+    body: { qcc_app_key: 'my-app-key', qcc_secret_key: 'my-secret' },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.qcc_app_key, 'my-app-key');
+  assert.equal(saved.data.qcc_secret_key_set, '1');
+  assert.equal(saved.data.qcc_secret_key, undefined);
+
+  const cleared = await api('/api/settings', { method: 'PUT', token: adminToken, body: { qcc_secret_key_clear: '1' } });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.data.qcc_secret_key_set, '');
+});
+
 test('联系表单:前台可提交,后台可查看与管理', async () => {
   const bad = await api('/api/public/contact', { method: 'POST', body: { name: '测试' } });
   assert.equal(bad.status, 400);

@@ -15,17 +15,15 @@ export interface BrightDataConfig {
 
 export function getBrightDataConfig(): BrightDataConfig {
   const s = getSettings();
-  const apiKey = s.brightdata_api_key?.trim() || process.env.BRIGHTDATA_API_KEY?.trim();
-  const serpZone = s.brightdata_serp_zone?.trim() || process.env.BRIGHTDATA_SERP_ZONE?.trim();
+  const apiKey = s.brightdata_api_key?.trim();
+  const serpZone = s.brightdata_serp_zone?.trim();
 
-  let browserAuth = process.env.BRIGHTDATA_BROWSER_AUTH?.trim();
-  if (!browserAuth) {
-    const customerId = s.brightdata_customer_id?.trim() || process.env.BRIGHTDATA_CUSTOMER_ID?.trim();
-    const browserZone = s.brightdata_browser_zone?.trim() || process.env.BRIGHTDATA_BROWSER_ZONE?.trim();
-    const browserPassword = s.brightdata_browser_password?.trim() || process.env.BRIGHTDATA_BROWSER_PASSWORD?.trim();
-    if (customerId && browserZone && browserPassword) {
-      browserAuth = `brd-customer-${customerId}-zone-${browserZone}:${browserPassword}`;
-    }
+  let browserAuth: string | undefined;
+  const customerId = s.brightdata_customer_id?.trim();
+  const browserZone = s.brightdata_browser_zone?.trim();
+  const browserPassword = s.brightdata_browser_password?.trim();
+  if (customerId && browserZone && browserPassword) {
+    browserAuth = `brd-customer-${customerId}-zone-${browserZone}:${browserPassword}`;
   }
 
   return { apiKey, serpZone, browserAuth };
@@ -74,7 +72,7 @@ export async function serpSearch(opts: SerpSearchOptions): Promise<unknown> {
   const cfg = getBrightDataConfig();
   if (!cfg.apiKey || !cfg.serpZone) {
     throw new Error(
-      'Bright Data SERP API 未配置。请在后台「站点设置 → Bright Data」填写 API Key 与 SERP Zone，或设置环境变量 BRIGHTDATA_API_KEY / BRIGHTDATA_SERP_ZONE。'
+      'Bright Data SERP API 未配置。请在后台「站点设置 → 数据服务 → Bright Data」填写 API Key 与 SERP Zone。'
     );
   }
 
@@ -127,7 +125,7 @@ export async function browsePage(opts: BrowsePageOptions): Promise<{ title: stri
   const cfg = getBrightDataConfig();
   if (!cfg.browserAuth) {
     throw new Error(
-      'Bright Data Scraping Browser 未配置。请在后台填写 Account ID、Browser Zone、Browser 密码，或设置环境变量 BRIGHTDATA_BROWSER_AUTH(格式 user:pass)。'
+      'Bright Data Scraping Browser 未配置。请在后台「站点设置 → 数据服务 → Bright Data」填写 Account ID、Browser Zone 与 Browser 密码。'
     );
   }
 

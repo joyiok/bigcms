@@ -599,54 +599,117 @@ pages.users = async () => {
   }));
 };
 
+const SETTINGS_SECRET_FIELDS = ['ai_api_key', 'brightdata_api_key', 'brightdata_browser_password', 'qcc_secret_key'];
+
+function wireSettingsSecretFields(form) {
+  for (const name of SETTINGS_SECRET_FIELDS) {
+    const el = form.elements[name];
+    if (!el) continue;
+    el.autocomplete = 'new-password';
+    el.dataset.secretField = '1';
+    el.addEventListener('input', () => { el.dataset.touched = '1'; });
+  }
+}
+
+function settingsFieldRow(key, label, s, opts = {}) {
+  const val = s[key] || '';
+  const ph = esc(opts.placeholder || '');
+  if (opts.type === 'textarea') {
+    return `<div class="form-row"><label>${label}</label><textarea name="${key}" rows="${opts.rows || 3}" placeholder="${ph}">${esc(val)}</textarea></div>`;
+  }
+  const inputType = opts.inputType ? ` type="${opts.inputType}"` : '';
+  const ac = opts.secret ? ' autocomplete="new-password" data-secret-field="1"' : (opts.autocomplete ? ` autocomplete="${opts.autocomplete}"` : '');
+  return `<div class="form-row"><label>${label}</label><input name="${key}" value="${esc(val)}" placeholder="${ph}"${inputType}${ac}></div>`;
+}
+
+function settingsGroupCard(title, desc, fieldsHtml) {
+  return `<section class="card settings-group">
+    <header class="settings-group-head"><h3>${title}</h3>${desc ? `<p class="settings-group-desc">${desc}</p>` : ''}</header>
+    <div class="form-grid">${fieldsHtml}</div>
+  </section>`;
+}
+
 // ---------- 站点设置 ----------
 pages.settings = async () => {
   const s = await api('/settings');
-  const SITE_FIELDS = [
-    ['site_name', '站点名称'],
-    ['site_description', '站点描述'],
-    ['site_keywords', '关键词(逗号分隔)'],
-    ['icp_number', 'ICP 备案号'],
-    ['site_footer_credit', '页脚署名'],
-    ['nav_home', '导航「首页」'],
-    ['nav_news', '导航「新闻中心」'],
-    ['hero_cta', '首页主按钮'],
-    ['hero_secondary_cta', '首页次按钮(留空=联系我们)'],
-    ['hero_secondary_href', '首页次按钮链接'],
-    ['hero_quick_title', '快速入口标题'],
-    ['hero_image', '首页右侧主图 URL'],
-    ['home_value_1', '能力点 1'],
-    ['home_value_2', '能力点 2'],
-    ['home_value_3', '能力点 3'],
-    ['home_about_title', '关于区块标题'],
-    ['home_about_text', '关于区块正文'],
-    ['hero_notices_title', '要闻侧栏标题'],
-    ['home_news_title', '「前沿洞察」标题'],
-    ['home_products_title', '「产品」标题'],
-    ['home_products_more_link', '「查看全部产品」链接'],
-    ['home_categories_title', '「栏目」标题'],
-    ['home_more_link', '「全部动态」链接'],
-    ['cta_title', '底部 CTA 标题'],
-    ['cta_text', '底部 CTA 描述'],
-    ['cta_button', '底部 CTA 按钮'],
-    ['cta_href', '底部 CTA 链接'],
+  const SITE_GROUPS = [
+    {
+      title: '基础信息',
+      desc: '站点名称、SEO 与备案',
+      fields: [
+        ['site_name', '站点名称'],
+        ['site_description', '站点描述', { type: 'textarea', rows: 2 }],
+        ['site_keywords', '关键词', { placeholder: '逗号分隔' }],
+        ['icp_number', 'ICP 备案号'],
+        ['site_footer_credit', '页脚署名'],
+      ],
+    },
+    {
+      title: '导航',
+      fields: [
+        ['nav_home', '「首页」'],
+        ['nav_news', '「新闻中心」'],
+        ['nav_products', '「商品」'],
+        ['nav_contact', '「联系我们」'],
+      ],
+    },
+    {
+      title: '首页 Hero',
+      desc: '首屏文案、按钮与主图',
+      fields: [
+        ['hero_cta', '主按钮文案'],
+        ['hero_secondary_cta', '次按钮文案', { placeholder: '留空则显示「联系我们」' }],
+        ['hero_secondary_href', '次按钮链接'],
+        ['hero_quick_title', '快速入口标题'],
+        ['hero_image', '右侧主图 URL'],
+        ['home_value_1', '能力点 1'],
+        ['home_value_2', '能力点 2'],
+        ['home_value_3', '能力点 3'],
+      ],
+    },
+    {
+      title: '首页区块',
+      desc: '要闻、洞察、产品与栏目',
+      fields: [
+        ['hero_notices_title', '要闻侧栏标题'],
+        ['home_news_title', '「前沿洞察」标题'],
+        ['home_products_title', '「产品」标题'],
+        ['home_products_more_link', '「查看全部产品」链接'],
+        ['home_categories_title', '「栏目」标题'],
+        ['home_more_link', '「全部动态」链接'],
+        ['home_about_title', '关于区块标题'],
+        ['home_about_text', '关于区块正文', { type: 'textarea', rows: 4 }],
+      ],
+    },
+    {
+      title: '底部 CTA',
+      fields: [
+        ['cta_title', '标题'],
+        ['cta_text', '描述', { type: 'textarea', rows: 2 }],
+        ['cta_button', '按钮文案'],
+        ['cta_href', '按钮链接'],
         ['footer_categories_title', '页脚栏目标题'],
-    ['footer_links_title', '页脚快速入口标题'],
-    ['nav_products', '导航「商品」'],
-    ['nav_contact', '导航「联系我们」'],
-    ['contact_title', '联系页标题'],
-    ['contact_intro', '联系页简介'],
-    ['contact_name_label', '表单「姓名」'],
-    ['contact_phone_label', '表单「电话」'],
-    ['contact_email_label', '表单「邮箱」'],
-    ['contact_company_label', '表单「公司」'],
-    ['contact_message_label', '表单「留言」'],
-    ['contact_submit', '联系表单提交按钮'],
-    ['contact_success', '联系表单成功提示'],
-    ['contact_reply_hint', '联系页回复说明'],
+        ['footer_links_title', '页脚快速入口标题'],
+      ],
+    },
+    {
+      title: '联系页',
+      fields: [
+        ['contact_title', '页面标题'],
+        ['contact_intro', '页面简介', { type: 'textarea', rows: 2 }],
+        ['contact_name_label', '表单「姓名」'],
+        ['contact_phone_label', '表单「电话」'],
+        ['contact_email_label', '表单「邮箱」'],
+        ['contact_company_label', '表单「公司」'],
+        ['contact_message_label', '表单「留言」'],
+        ['contact_submit', '提交按钮'],
+        ['contact_success', '成功提示'],
+        ['contact_reply_hint', '回复说明'],
+      ],
+    },
   ];
   const AI_PROVIDERS = [
-    ['', '自动(环境变量 / pi CLI)'],
+    ['', '自动检测'],
     ['deepseek', 'DeepSeek'],
     ['openai', 'OpenAI'],
     ['anthropic', 'Anthropic'],
@@ -660,74 +723,125 @@ pages.settings = async () => {
     ['high', 'High'],
     ['xhigh', 'Max'],
   ];
+  const siteGroupsHtml = SITE_GROUPS.map((g) => settingsGroupCard(
+    g.title,
+    g.desc,
+    g.fields.map(([key, label, opts]) => settingsFieldRow(key, label, s, opts || {})).join('')
+  )).join('');
   $('#main').innerHTML = `
-    <div class="page-header"><h2>站点设置</h2></div>
-    <form class="settings-grid" id="settings-form">
-      <section class="card settings-card">
-        <h3>站点信息</h3>
-        <div class="form-grid">
-          ${SITE_FIELDS.map(([key, label]) => `<div class="form-row"><label>${label}</label><input name="${key}" value="${esc(s[key] || '')}"></div>`).join('')}
+    <div class="page-header settings-page-head">
+      <div>
+        <h2>站点设置</h2>
+        <p class="page-sub">前台文案与 AI 数据服务，保存后立即生效</p>
+      </div>
+    </div>
+    <form class="settings-page" id="settings-form">
+      <div class="settings-autofill-trap" aria-hidden="true">
+        <input type="text" tabindex="-1" autocomplete="username">
+        <input type="password" tabindex="-1" autocomplete="current-password">
+      </div>
+      <div class="settings-layout">
+        <div class="settings-main">
+          <p class="settings-column-label">站点内容</p>
+          <div class="settings-stack">${siteGroupsHtml}</div>
         </div>
-      </section>
-      <section class="card settings-card">
-        <div class="settings-section-title">
-          <h3>AI 助手</h3>
-          <span class="badge ${s.ai_api_key_set === '1' ? 'active' : 'disabled'}">${s.ai_api_key_set === '1' ? '已保存凭证' : '未保存凭证'}</span>
-        </div>
-        <div class="form-grid">
-          <div class="form-cols">
-            <div class="form-row"><label>AI 提供商</label>
-              <select name="ai_provider">${AI_PROVIDERS.map(([value, label]) => `<option value="${value}" ${s.ai_provider === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
-            </div>
-            <div class="form-row"><label>思考强度</label>
-              <select name="ai_thinking">${AI_THINKING.map(([value, label]) => `<option value="${value}" ${s.ai_thinking === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
-            </div>
+        <aside class="settings-aside">
+          <p class="settings-column-label">数据服务</p>
+          <div class="settings-stack">
+            <section class="card settings-group integration-card">
+              <header class="settings-group-head settings-group-head-row">
+                <div>
+                  <h3>AI 助手</h3>
+                  <p class="settings-group-desc">对话式内容运营与站点管理</p>
+                </div>
+                <span class="badge ${s.ai_api_key_set === '1' ? 'active' : 'disabled'}">${s.ai_api_key_set === '1' ? '已配置' : '未配置'}</span>
+              </header>
+              <div class="form-grid">
+                <div class="form-cols">
+                  <div class="form-row"><label>提供商</label>
+                    <select name="ai_provider">${AI_PROVIDERS.map(([value, label]) => `<option value="${value}" ${s.ai_provider === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+                  </div>
+                  <div class="form-row"><label>思考强度</label>
+                    <select name="ai_thinking">${AI_THINKING.map(([value, label]) => `<option value="${value}" ${s.ai_thinking === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+                  </div>
+                </div>
+                <div class="form-row"><label>模型 ID</label><input name="ai_model" value="${esc(s.ai_model || '')}" placeholder="deepseek-v4-flash"></div>
+                <div class="form-row">
+                  <label>API Key</label>
+                  <input type="password" name="ai_api_key" autocomplete="new-password" data-secret-field="1" placeholder="${s.ai_api_key_set === '1' ? '已保存，留空不修改' : '所选提供商的 API Key'}">
+                  <p class="field-help">留空表示不修改。请勿让浏览器把登录密码自动填进此栏。</p>
+                </div>
+                ${s.ai_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="ai_api_key_clear" value="1"> 清除已保存的 API Key</label>' : ''}
+              </div>
+            </section>
+            <section class="card settings-group integration-card">
+              <header class="settings-group-head settings-group-head-row">
+                <div>
+                  <h3>Bright Data</h3>
+                  <p class="settings-group-desc"><code>web_search</code> · <code>browse_webpage</code></p>
+                </div>
+                <div class="integration-badges">
+                  <span class="badge ${s.brightdata_api_key_set === '1' ? 'active' : 'disabled'}">SERP</span>
+                  <span class="badge ${s.brightdata_browser_password_set === '1' ? 'active' : 'disabled'}">Browser</span>
+                </div>
+              </header>
+              <div class="form-grid">
+                <div class="form-row"><label>SERP API Key</label>
+                  <input type="password" name="brightdata_api_key" autocomplete="new-password" data-secret-field="1" placeholder="${s.brightdata_api_key_set === '1' ? '已保存，留空不修改' : 'Bearer Token'}">
+                </div>
+                <div class="form-row"><label>SERP Zone</label>
+                  <input name="brightdata_serp_zone" value="${esc(s.brightdata_serp_zone || '')}" placeholder="zone 名称">
+                </div>
+                <div class="form-row"><label>Account ID</label>
+                  <input name="brightdata_customer_id" value="${esc(s.brightdata_customer_id || '')}" placeholder="hl_xxxxxx">
+                </div>
+                <div class="form-row"><label>Browser Zone</label>
+                  <input name="brightdata_browser_zone" value="${esc(s.brightdata_browser_zone || '')}" placeholder="scraping_browser">
+                </div>
+                <div class="form-row"><label>Browser 密码</label>
+                  <input type="password" name="brightdata_browser_password" autocomplete="new-password" data-secret-field="1" placeholder="${s.brightdata_browser_password_set === '1' ? '已保存，留空不修改' : 'Access Details 密码'}">
+                  <p class="field-help">用户名 <code>brd-customer-&lt;ID&gt;-zone-&lt;Zone&gt;</code> 由上方字段自动拼接。</p>
+                </div>
+                ${s.brightdata_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_api_key_clear" value="1"> 清除 SERP Key</label>' : ''}
+                ${s.brightdata_browser_password_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_browser_password_clear" value="1"> 清除 Browser 密码</label>' : ''}
+              </div>
+            </section>
+            <section class="card settings-group integration-card">
+              <header class="settings-group-head settings-group-head-row">
+                <div>
+                  <h3>企查查</h3>
+                  <p class="settings-group-desc"><code>search_companies</code> · <a href="https://openapi.qcc.com/dataApi/886" target="_blank" rel="noopener">API 886</a></p>
+                </div>
+                <span class="badge ${s.qcc_secret_key_set === '1' && s.qcc_app_key ? 'active' : 'disabled'}">${s.qcc_secret_key_set === '1' && s.qcc_app_key ? '已配置' : '未配置'}</span>
+              </header>
+              <div class="form-grid">
+                <div class="form-row"><label>AppKey</label>
+                  <input name="qcc_app_key" value="${esc(s.qcc_app_key || '')}" placeholder="开放平台 AppKey" autocomplete="off">
+                </div>
+                <div class="form-row"><label>SecretKey</label>
+                  <input type="password" name="qcc_secret_key" autocomplete="new-password" data-secret-field="1" placeholder="${s.qcc_secret_key_set === '1' ? '已保存，留空不修改' : '应用 SecretKey'}">
+                </div>
+                ${s.qcc_secret_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="qcc_secret_key_clear" value="1"> 清除 SecretKey</label>' : ''}
+              </div>
+            </section>
           </div>
-          <div class="form-row"><label>模型 ID</label><input name="ai_model" value="${esc(s.ai_model || '')}" placeholder="deepseek-v4-flash"></div>
-          <div class="form-row">
-            <label>API Key</label>
-            <input type="password" name="ai_api_key" autocomplete="off" placeholder="${s.ai_api_key_set === '1' ? '已保存,留空不修改' : '填写所选提供商的 API Key'}">
-            <p class="field-help">填写后台 API Key 后无需重启服务。也可以继续使用环境变量或 pi CLI 登录凭证。</p>
-          </div>
-          ${s.ai_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="ai_api_key_clear" value="1"> 清除已保存的 API Key</label>' : ''}
-        </div>
-      </section>
-      <section class="card settings-card">
-        <div class="settings-section-title">
-          <h3>Bright Data</h3>
-          <span class="badge ${s.brightdata_api_key_set === '1' ? 'active' : 'disabled'}">${s.brightdata_api_key_set === '1' ? 'SERP 已配置' : 'SERP 未配置'}</span>
-          <span class="badge ${s.brightdata_browser_password_set === '1' ? 'active' : 'disabled'}">${s.brightdata_browser_password_set === '1' ? 'Browser 已配置' : 'Browser 未配置'}</span>
-        </div>
-        <p class="field-help" style="margin-bottom:12px">为 AI 助手提供 <code>web_search</code>(SERP API) 与 <code>browse_webpage</code>(Scraping Browser)。凭证见 <a href="https://docs.brightdata.com/scraping-automation/serp-api/introduction" target="_blank" rel="noopener">SERP 文档</a> / <a href="https://docs.brightdata.com/scraping-automation/scraping-browser/introduction" target="_blank" rel="noopener">Browser 文档</a>。</p>
-        <div class="form-grid">
-          <div class="form-row"><label>SERP API Key</label>
-            <input type="password" name="brightdata_api_key" autocomplete="off" placeholder="${s.brightdata_api_key_set === '1' ? '已保存,留空不修改' : 'Bearer Token'}">
-          </div>
-          <div class="form-row"><label>SERP Zone 名称</label>
-            <input name="brightdata_serp_zone" value="${esc(s.brightdata_serp_zone || '')}" placeholder="创建 SERP API 时的 zone 名">
-          </div>
-          <div class="form-cols">
-            <div class="form-row"><label>Account ID</label>
-              <input name="brightdata_customer_id" value="${esc(s.brightdata_customer_id || '')}" placeholder="hl_xxxxxx">
-            </div>
-            <div class="form-row"><label>Browser Zone 名称</label>
-              <input name="brightdata_browser_zone" value="${esc(s.brightdata_browser_zone || '')}" placeholder="scraping_browser 区名">
-            </div>
-          </div>
-          <div class="form-row"><label>Browser 密码</label>
-            <input type="password" name="brightdata_browser_password" autocomplete="off" placeholder="${s.brightdata_browser_password_set === '1' ? '已保存,留空不修改' : 'Access Details 中的密码'}">
-            <p class="field-help">用户名格式为 <code>brd-customer-&lt;Account ID&gt;-zone-&lt;Zone&gt;</code>,也可改用环境变量 <code>BRIGHTDATA_BROWSER_AUTH=user:pass</code>。</p>
-          </div>
-          ${s.brightdata_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_api_key_clear" value="1"> 清除 SERP API Key</label>' : ''}
-          ${s.brightdata_browser_password_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_browser_password_clear" value="1"> 清除 Browser 密码</label>' : ''}
-        </div>
-      </section>
-      <div class="form-actions settings-actions"><button type="submit" class="btn primary">保存设置</button></div>
+        </aside>
+      </div>
+      <div class="settings-toolbar">
+        <button type="submit" class="btn primary">保存设置</button>
+      </div>
     </form>`;
-  $('#settings-form').onsubmit = async (e) => {
+  const form = $('#settings-form');
+  wireSettingsSecretFields(form);
+  form.onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api('/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
+      const body = Object.fromEntries(new FormData(e.target));
+      for (const name of SETTINGS_SECRET_FIELDS) {
+        const el = e.target.elements[name];
+        if (el && el.dataset.touched !== '1') delete body[name];
+      }
+      await api('/settings', { method: 'PUT', body });
       toast('设置已保存');
       pages.settings();
     } catch (err) { toast(err.message, true); }
@@ -744,7 +858,7 @@ const AI_TOOL_LABELS = {
   list_users: '查询用户', create_user: '新建用户', update_user: '更新用户', delete_user: '删除用户',
   list_audit_logs: '查询审计日志', list_article_revisions: '查询修订历史', restore_article_revision: '恢复修订版本',
   list_contacts: '查询联系人', update_contact: '更新联系人', delete_contact: '删除联系人',
-  web_search: '搜索引擎检索', browse_webpage: '浏览器抓取网页',
+  web_search: '搜索引擎检索', browse_webpage: '浏览器抓取网页', search_companies: '企查查企业搜索',
 };
 
 const AI_SUGGESTIONS = [

@@ -140,7 +140,7 @@ function buildSystemPrompt(user: AuthUser): string {
 6. 不确定用户意图时先提问澄清,不要擅自行动。
 7. 权限受限时(工具不存在或报错「仅管理员」),如实告知用户当前角色无权限。
 8. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。
-9. 需要查外部信息时:用 web_search(SERP API)做搜索引擎检索;需要阅读具体网页正文(尤其 JS 站点)时用 browse_webpage(Scraping Browser)。二者需在后台配置 Bright Data 凭证;未配置时如实告知管理员。`;
+9. 需要查外部信息时:用 web_search(SERP API)做搜索引擎检索;需要阅读具体网页正文(尤其 JS 站点)时用 browse_webpage(Scraping Browser);查国内企业工商信息用 search_companies(企查查 API 886)。需在后台配置对应凭证;未配置时如实告知管理员。`;
 }
 
 interface Entry {

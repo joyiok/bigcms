@@ -52,7 +52,13 @@ settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
 
   for (const [key, value] of Object.entries(body)) {
     if (!/^[a-z0-9_]+$/i.test(key) || typeof value !== 'string') continue;
-    if (key === 'ai_api_key_set' || key === 'brightdata_api_key_set' || key === 'brightdata_browser_password_set') continue;
+    if (
+      key === 'ai_api_key_set' ||
+      key === 'brightdata_api_key_set' ||
+      key === 'brightdata_browser_password_set' ||
+      key === 'qcc_secret_key_set'
+    )
+      continue;
     if (key === 'ai_api_key_clear') {
       if (value === '1') {
         del.run('ai_api_key');
@@ -75,7 +81,21 @@ settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
       }
       continue;
     }
-    if ((key === 'ai_api_key' || key === 'brightdata_api_key' || key === 'brightdata_browser_password') && value.trim() === '') continue;
+    if (key === 'qcc_secret_key_clear') {
+      if (value === '1') {
+        del.run('qcc_secret_key');
+        changed.push('qcc_secret_key');
+      }
+      continue;
+    }
+    if (
+      (key === 'ai_api_key' ||
+        key === 'brightdata_api_key' ||
+        key === 'brightdata_browser_password' ||
+        key === 'qcc_secret_key') &&
+      value.trim() === ''
+    )
+      continue;
     upsert.run(key, value.trim());
     changed.push(key);
     if (key.startsWith('ai_')) aiChanged = true;

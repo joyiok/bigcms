@@ -11,6 +11,7 @@ import type { AuthUser } from '../auth.js';
 import { getSafeSettings } from '../settings.js';
 import { SITE_COPY_DEFAULTS, SITE_COPY_LABELS } from '../site-copy.js';
 import { browsePage, serpSearch } from '../brightdata.js';
+import { qccFuzzySearch } from '../qcc.js';
 
 /** 工具返回:把数据序列化为 JSON 文本交给模型 */
 function ok(data: unknown) {
@@ -886,6 +887,30 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           const data = await browsePage({ url: p.url, maxChars: p.max_chars });
           auditAi(user, 'browse_webpage', '', p.url.slice(0, 200));
           return ok(data);
+        },
+      }),
+      defineTool({
+        name: 'search_companies',
+        label: '企查查企业搜索',
+        description:
+          '通过企查查开放平台 API 886(企业模糊搜索)按企业名、人名、地址等关键词查询匹配企业,返回名称、统一社会信用代码、法人、状态、成立日期、注册地址等。需配置 AppKey 与 SecretKey。',
+        parameters: Type.Object({
+          search_key: Type.String({ description: '搜索关键词(企业名、人名、产品名、地址等,必填)' }),
+          page_index: Type.Optional(Type.Number({ description: '页码,默认 1' })),
+          page_size: Type.Optional(Type.Number({ description: '每页条数,可选,最大 20' })),
+          province_code: Type.Optional(Type.String({ description: '省份行政区划代码(6 位,可选)' })),
+          city_code: Type.Optional(Type.String({ description: '城市行政区划代码(6 位,可选)' })),
+        }),
+        execute: async (_id, p) => {
+          const data = await qccFuzzySearch({
+            searchKey: p.search_key,
+            pageIndex: p.page_index,
+            pageSize: p.page_size,
+            provinceCode: p.province_code,
+            cityCode: p.city_code,
+          });
+          auditAi(user, 'search_companies', '', p.search_key.slice(0, 80));
+          return ok({ search_key: p.search_key, ...data });
         },
       })
     );
