@@ -785,10 +785,14 @@ pages.settings = async () => {
                 </div>
                 <div class="integration-badges">
                   <span class="badge ${s.brightdata_api_key_set === '1' ? 'active' : 'disabled'}">SERP</span>
-                  <span class="badge ${s.brightdata_browser_password_set === '1' ? 'active' : 'disabled'}">Browser</span>
+                  <span class="badge ${s.browser_executable_path || s.brightdata_browser_password_set === '1' ? 'active' : 'disabled'}">Browser</span>
                 </div>
               </header>
               <div class="form-grid">
+                <div class="form-row"><label>本地浏览器路径</label>
+                  <input name="browser_executable_path" value="${esc(s.browser_executable_path || '')}" placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" autocomplete="off">
+                  <p class="field-help"><code>browse_webpage</code> 优先使用本机无头 Chrome;留空则使用下方 Bright Data Browser。Linux 示例 <code>/usr/bin/google-chrome</code>。</p>
+                </div>
                 <div class="form-row"><label>SERP API Key</label>
                   <input type="password" name="brightdata_api_key" autocomplete="new-password" data-secret-field="1" placeholder="${s.brightdata_api_key_set === '1' ? '已保存，留空不修改' : 'Bearer Token'}">
                 </div>
@@ -936,7 +940,7 @@ pages.assistant = async () => {
         ${status.ready ? `<div class="ai-suggestions" id="ai-suggestions">${AI_SUGGESTIONS.map((s) => `<button type="button" class="ai-chip" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
       </div>
       <form class="ai-input" id="ai-form">
-        <textarea id="ai-text" rows="2" placeholder="输入指令,Enter 发送,Shift+Enter 换行…" ${status.ready ? '' : 'disabled'}></textarea>
+        <textarea id="ai-text" rows="2" placeholder="输入指令,点击发送…" ${status.ready ? '' : 'disabled'}></textarea>
         <button class="btn primary" type="submit" id="ai-send" ${status.ready ? '' : 'disabled'}>发送</button>
       </form>
     </div>`;
@@ -1077,9 +1081,6 @@ pages.assistant = async () => {
     e.preventDefault();
     if (aiBusy) { api('/assistant/abort', { method: 'POST' }).catch(() => {}); return; }
     send();
-  };
-  $('#ai-text').onkeydown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
   // 输入框随内容自动增高(上限约 6 行)
   $('#ai-text').oninput = (e) => {

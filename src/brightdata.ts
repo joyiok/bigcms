@@ -1,8 +1,10 @@
-/** Bright Data SERP API + Scraping Browser 集成 */
+/** Bright Data SERP API + 网页抓取(本地 Chrome 或 Scraping Browser) */
+import fs from 'node:fs';
 import { getSettings } from './settings.js';
 
 const BRIGHTDATA_REQUEST_URL = 'https://api.brightdata.com/request';
 const BROWSER_CDP_HOST = 'brd.superproxy.io:9222';
+const LOCAL_BROWSER_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
 
 export type SerpEngine = 'google' | 'bing' | 'duckduckgo';
 export type SerpDataFormat = 'parsed_light' | 'markdown' | 'json';
@@ -33,8 +35,20 @@ export function isSerpConfigured(cfg: BrightDataConfig = getBrightDataConfig()):
   return Boolean(cfg.apiKey && cfg.serpZone);
 }
 
+/** 后台「本地浏览器路径」或环境变量 BROWSER_EXECUTABLE / CHROME_PATH */
+export function getLocalBrowserPath(): string | undefined {
+  const fromSettings = getSettings().browser_executable_path?.trim();
+  if (fromSettings) return fromSettings;
+  const fromEnv = process.env.BROWSER_EXECUTABLE?.trim() || process.env.CHROME_PATH?.trim();
+  return fromEnv || undefined;
+}
+
+export function isLocalBrowserConfigured(): boolean {
+  return Boolean(getLocalBrowserPath());
+}
+
 export function isBrowserConfigured(cfg: BrightDataConfig = getBrightDataConfig()): boolean {
-  return Boolean(cfg.browserAuth);
+  return isLocalBrowserConfigured() || Boolean(cfg.browserAuth);
 }
 
 function encodeAuthForWss(auth: string): string {
@@ -120,42 +134,97 @@ export interface BrowsePageOptions {
   waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2';
 }
 
-/** 通过 Bright Data Scraping Browser 渲染并抓取页面正文 */
-export async function browsePage(opts: BrowsePageOptions): Promise<{ title: string; url: string; text: string }> {
-  const cfg = getBrightDataConfig();
-  if (!cfg.browserAuth) {
-    throw new Error(
-      'Bright Data Scraping Browser 未配置。请在后台「站点设置 → 数据服务 → Bright Data」填写 Account ID、Browser Zone 与 Browser 密码。'
-    );
-  }
-
+function parseBrowseUrl(url: string): URL {
   let target: URL;
   try {
-    target = new URL(opts.url);
+    target = new URL(url);
   } catch {
     throw new Error('URL 无效');
   }
   if (!['http:', 'https:'].includes(target.protocol)) {
     throw new Error('仅支持 http/https URL');
   }
+  return target;
+}
 
-  const { default: puppeteer } = await import('puppeteer-core');
-  const endpoint = `wss://${encodeAuthForWss(cfg.browserAuth)}@${BROWSER_CDP_HOST}`;
-  const browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
+function assertLocalBrowserExists(executablePath: string): void {
   try {
-    const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(120_000);
-    await page.goto(target.href, { waitUntil: opts.waitUntil ?? 'domcontentloaded' });
-    const meta = await page.evaluate(() => ({
-      title: document.title,
-      url: location.href,
-    }));
-    let text = await page.evaluate(() => document.body?.innerText ?? '');
-    text = text.replace(/\n{3,}/g, '\n\n').trim();
-    const maxChars = opts.maxChars ?? 12_000;
-    if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n…(已截断)`;
-    return { title: meta.title, url: meta.url, text };
+    fs.accessSync(executablePath, fs.constants.F_OK);
+  } catch {
+    throw new Error(`本地浏览器路径不存在: ${executablePath}`);
+  }
+}
+
+async function scrapePage(
+  openPage: () => Promise<{
+    goto: (url: string, opts: { waitUntil: BrowsePageOptions['waitUntil'] }) => Promise<unknown>;
+    evaluate: <T>(fn: () => T) => Promise<T>;
+    setDefaultNavigationTimeout: (ms: number) => void;
+  }>,
+  target: URL,
+  opts: BrowsePageOptions
+): Promise<{ title: string; url: string; text: string }> {
+  const page = await openPage();
+  page.setDefaultNavigationTimeout(120_000);
+  await page.goto(target.href, { waitUntil: opts.waitUntil ?? 'domcontentloaded' });
+  const meta = await page.evaluate(() => ({
+    title: document.title,
+    url: location.href,
+  }));
+  let text = await page.evaluate(() => document.body?.innerText ?? '');
+  text = text.replace(/\n{3,}/g, '\n\n').trim();
+  const maxChars = opts.maxChars ?? 12_000;
+  if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n…(已截断)`;
+  return { title: meta.title, url: meta.url, text };
+}
+
+async function browseWithLocalBrowser(
+  executablePath: string,
+  target: URL,
+  opts: BrowsePageOptions
+): Promise<{ title: string; url: string; text: string }> {
+  assertLocalBrowserExists(executablePath);
+  const { default: puppeteer } = await import('puppeteer-core');
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: true,
+    args: LOCAL_BROWSER_ARGS,
+  });
+  try {
+    return await scrapePage(() => browser.newPage(), target, opts);
   } finally {
     await browser.close();
   }
+}
+
+async function browseWithBrightData(
+  browserAuth: string,
+  target: URL,
+  opts: BrowsePageOptions
+): Promise<{ title: string; url: string; text: string }> {
+  const { default: puppeteer } = await import('puppeteer-core');
+  const endpoint = `wss://${encodeAuthForWss(browserAuth)}@${BROWSER_CDP_HOST}`;
+  const browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
+  try {
+    return await scrapePage(() => browser.newPage(), target, opts);
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * 抓取网页正文:优先使用后台配置的本地 Chrome;未配置时回退 Bright Data Scraping Browser。
+ */
+export async function browsePage(opts: BrowsePageOptions): Promise<{ title: string; url: string; text: string }> {
+  const target = parseBrowseUrl(opts.url);
+  const localPath = getLocalBrowserPath();
+  if (localPath) return browseWithLocalBrowser(localPath, target, opts);
+
+  const cfg = getBrightDataConfig();
+  if (!cfg.browserAuth) {
+    throw new Error(
+      '网页抓取未配置。请在后台「站点设置 → Bright Data」填写本地浏览器路径,或配置 Account ID、Browser Zone 与 Browser 密码。'
+    );
+  }
+  return browseWithBrightData(cfg.browserAuth, target, opts);
 }

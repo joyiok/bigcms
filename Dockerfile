@@ -9,7 +9,15 @@ RUN npm run build
 
 FROM node:24-slim
 ENV NODE_ENV=production
+# browse_webpage 本地无头浏览器(Debian chromium 包)
+ENV BROWSER_EXECUTABLE=/usr/bin/chromium
 WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    chromium \
+    fonts-liberation \
+    ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist

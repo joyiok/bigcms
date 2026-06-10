@@ -12,7 +12,14 @@ process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.UPLOAD_DIR = path.join(tmp, 'uploads');
 
 const { db } = await import('../src/db.js');
-const { serpSearch, getBrightDataConfig, isSerpConfigured } = await import('../src/brightdata.js');
+const {
+  serpSearch,
+  getBrightDataConfig,
+  isSerpConfigured,
+  getLocalBrowserPath,
+  isLocalBrowserConfigured,
+  isBrowserConfigured,
+} = await import('../src/brightdata.js');
 
 before(() => {
   db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`).run('brightdata_api_key', 'test-key');
@@ -58,4 +65,20 @@ test('serpSearch 未配置时抛出明确错误', async () => {
   db.prepare(`DELETE FROM settings WHERE key = ?`).run('brightdata_api_key');
   await assert.rejects(() => serpSearch({ query: 'x' }), /SERP API 未配置/);
   db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`).run('brightdata_api_key', 'test-key');
+});
+
+test('getLocalBrowserPath 从 settings 读取本地浏览器路径', () => {
+  db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(
+    'browser_executable_path',
+    '/usr/bin/google-chrome'
+  );
+  assert.equal(getLocalBrowserPath(), '/usr/bin/google-chrome');
+  assert.equal(isLocalBrowserConfigured(), true);
+  assert.equal(isBrowserConfigured(), true);
+  db.prepare(`DELETE FROM settings WHERE key = ?`).run('browser_executable_path');
+});
+
+test('browsePage 未配置浏览器时抛出明确错误', async () => {
+  const { browsePage } = await import('../src/brightdata.js');
+  await assert.rejects(() => browsePage({ url: 'https://example.com' }), /网页抓取未配置/);
 });
