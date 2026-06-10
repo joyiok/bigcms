@@ -6,8 +6,9 @@ import { createApp } from './app.js';
 seed();
 startScheduler();
 
-createApp().listen(config.port, () => {
-  console.log(`BigCMS 已启动: http://localhost:${config.port}`);
-  console.log(`前台站点:     http://localhost:${config.port}/`);
-  console.log(`管理后台:     http://localhost:${config.port}/admin/`);
+createApp().listen(config.port, config.host, () => {
+  const baseUrl = `http://${config.host}:${config.port}`;
+  console.log(`BigCMS 已启动: ${baseUrl}`);
+  console.log(`前台站点:     ${baseUrl}/`);
+  console.log(`管理后台:     ${baseUrl}/admin/`);
 });

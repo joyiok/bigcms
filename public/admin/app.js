@@ -601,25 +601,67 @@ pages.users = async () => {
 // ---------- 站点设置 ----------
 pages.settings = async () => {
   const s = await api('/settings');
-  const FIELDS = [
+  const SITE_FIELDS = [
     ['site_name', '站点名称'],
     ['site_description', '站点描述'],
     ['site_keywords', '关键词(逗号分隔)'],
     ['icp_number', 'ICP 备案号'],
   ];
+  const AI_PROVIDERS = [
+    ['', '自动(环境变量 / pi CLI)'],
+    ['deepseek', 'DeepSeek'],
+    ['openai', 'OpenAI'],
+    ['anthropic', 'Anthropic'],
+  ];
+  const AI_THINKING = [
+    ['', '默认'],
+    ['off', '关闭'],
+    ['minimal', 'Minimal'],
+    ['low', 'Low'],
+    ['medium', 'Medium'],
+    ['high', 'High'],
+    ['xhigh', 'Max'],
+  ];
   $('#main').innerHTML = `
     <div class="page-header"><h2>站点设置</h2></div>
-    <div class="card" style="max-width:640px">
-      <form class="form-grid" id="settings-form">
-        ${FIELDS.map(([key, label]) => `<div class="form-row"><label>${label}</label><input name="${key}" value="${esc(s[key] || '')}"></div>`).join('')}
-        <div class="form-actions"><button type="submit" class="btn primary">保存设置</button></div>
-      </form>
-    </div>`;
+    <form class="settings-grid" id="settings-form">
+      <section class="card settings-card">
+        <h3>站点信息</h3>
+        <div class="form-grid">
+          ${SITE_FIELDS.map(([key, label]) => `<div class="form-row"><label>${label}</label><input name="${key}" value="${esc(s[key] || '')}"></div>`).join('')}
+        </div>
+      </section>
+      <section class="card settings-card">
+        <div class="settings-section-title">
+          <h3>AI 助手</h3>
+          <span class="badge ${s.ai_api_key_set === '1' ? 'active' : 'disabled'}">${s.ai_api_key_set === '1' ? '已保存凭证' : '未保存凭证'}</span>
+        </div>
+        <div class="form-grid">
+          <div class="form-cols">
+            <div class="form-row"><label>AI 提供商</label>
+              <select name="ai_provider">${AI_PROVIDERS.map(([value, label]) => `<option value="${value}" ${s.ai_provider === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+            </div>
+            <div class="form-row"><label>思考强度</label>
+              <select name="ai_thinking">${AI_THINKING.map(([value, label]) => `<option value="${value}" ${s.ai_thinking === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+            </div>
+          </div>
+          <div class="form-row"><label>模型 ID</label><input name="ai_model" value="${esc(s.ai_model || '')}" placeholder="deepseek-v4-flash"></div>
+          <div class="form-row">
+            <label>API Key</label>
+            <input type="password" name="ai_api_key" autocomplete="off" placeholder="${s.ai_api_key_set === '1' ? '已保存,留空不修改' : '填写所选提供商的 API Key'}">
+            <p class="field-help">填写后台 API Key 后无需重启服务。也可以继续使用环境变量或 pi CLI 登录凭证。</p>
+          </div>
+          ${s.ai_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="ai_api_key_clear" value="1"> 清除已保存的 API Key</label>' : ''}
+        </div>
+      </section>
+      <div class="form-actions settings-actions"><button type="submit" class="btn primary">保存设置</button></div>
+    </form>`;
   $('#settings-form').onsubmit = async (e) => {
     e.preventDefault();
     try {
       await api('/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
       toast('设置已保存');
+      pages.settings();
     } catch (err) { toast(err.message, true); }
   };
 };
@@ -671,7 +713,7 @@ pages.assistant = async () => {
         <button class="btn small" id="ai-reset" ${status.ready ? '' : 'disabled'}>清空会话</button>
       </div>
     </div>
-    ${status.ready ? '' : `<div class="card ai-offline"><strong>AI 助手未就绪</strong><p class="muted" style="margin-top:6px">${esc(status.error || '')}</p></div>`}
+    ${status.ready ? '' : `<div class="card ai-offline"><strong>AI 助手未就绪</strong><p class="muted" style="margin-top:6px">${esc(status.error || '')}</p>${state.user.role === 'admin' ? '<p style="margin-top:12px"><a class="btn small" href="#/settings">配置 AI 助手</a></p>' : ''}</div>`}
     <div class="ai-chat">
       <div class="ai-messages" id="ai-messages">
         <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网的全部内容:写文章、发布、改分类标签、调站点设置等。</div></div></div>

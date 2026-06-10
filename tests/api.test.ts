@@ -103,6 +103,29 @@ test('认证与权限:未登录 401,只读角色建文章 403', async () => {
   assert.equal(denied.status, 403);
 });
 
+test('站点设置:AI API Key 只返回已配置标记,不回显密钥', async () => {
+  const saved = await api('/api/settings', {
+    method: 'PUT',
+    token: adminToken,
+    body: { ai_provider: 'deepseek', ai_model: 'deepseek-v4-flash', ai_thinking: 'off', ai_api_key: 'sk-test-secret' },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.ai_provider, 'deepseek');
+  assert.equal(saved.data.ai_model, 'deepseek-v4-flash');
+  assert.equal(saved.data.ai_api_key_set, '1');
+  assert.equal(saved.data.ai_api_key, undefined);
+
+  const fetched = await api('/api/settings', { token: adminToken });
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.data.ai_api_key_set, '1');
+  assert.equal(fetched.data.ai_api_key, undefined);
+
+  const cleared = await api('/api/settings', { method: 'PUT', token: adminToken, body: { ai_api_key_clear: '1' } });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.data.ai_api_key_set, '');
+  assert.equal(cleared.data.ai_api_key, undefined);
+});
+
 test('文章:slug 冲突返回 409', async () => {
   const dup = await api('/api/articles', {
     method: 'POST',

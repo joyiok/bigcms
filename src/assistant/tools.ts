@@ -8,6 +8,7 @@ import { articleSearchCondition, db, snapshotArticle, toUtcDateTime } from '../d
 import { slugify } from '../slug.js';
 import { hashPassword } from '../password.js';
 import type { AuthUser } from '../auth.js';
+import { getSafeSettings } from '../settings.js';
 
 /** 工具返回:把数据序列化为 JSON 文本交给模型 */
 function ok(data: unknown) {
@@ -605,10 +606,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
       label: '查看站点设置',
       description: '获取站点设置(站点名称、描述、关键词、ICP 备案号等)。',
       parameters: Type.Object({}),
-      execute: async () => {
-        const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
-        return ok(Object.fromEntries(rows.map((r) => [r.key, r.value])));
-      },
+      execute: async () => ok(getSafeSettings(false)),
     })
   );
 
@@ -636,8 +634,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
             }
           }
           auditAi(user, 'update_settings', '', changed.join(','));
-          const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
-          return ok(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+          return ok(getSafeSettings(false));
         },
       }),
       defineTool({

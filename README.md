@@ -61,11 +61,12 @@ docker run -d -p 3000:3000 \
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
+| `HOST` | `0.0.0.0` | 服务监听地址 |
 | `PORT` | `3000` | 服务端口 |
 | `JWT_SECRET` | 开发用默认值 | JWT 签名密钥(生产必改) |
 | `DATA_DIR` | `./data` | SQLite 数据库目录 |
 | `UPLOAD_DIR` | `./uploads` | 上传文件目录 |
-| `DEEPSEEK_API_KEY` | - | **推荐**:DeepSeek 官方 API 密钥(`api.deepseek.com`),设置后自动选用 `deepseek-v4-flash` |
+| `DEEPSEEK_API_KEY` | - | **推荐**:DeepSeek 官方 API 密钥(`api.deepseek.com`),也可在后台「站点设置 → AI 助手」填写;设置后自动选用 `deepseek-v4-flash` |
 | `ANTHROPIC_API_KEY` 等 | - | 其他模型提供商凭证(任一 Pi 支持的提供商;也可复用 pi CLI 登录的 `~/.pi/agent/auth.json`) |
 | `AI_PROVIDER` / `AI_MODEL` | 自动选择 | 指定 AI 助手使用的模型,如 `deepseek` + `deepseek-v4-pro`;只设 `AI_MODEL` 时自动在可用提供商中匹配 |
 | `AI_THINKING` | `off` | AI 助手思考强度:`off` / `minimal` / `low` / `medium` / `high` / `xhigh`(DeepSeek 上有效档位为 `high` / `xhigh`,对应官方 thinking high / max) |
@@ -82,7 +83,7 @@ docker run -d -p 3000:3000 \
 
 按 [DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/) 做了重点适配:
 
-- 设置 `DEEPSEEK_API_KEY` 即直连 `api.deepseek.com`,无需其他配置,默认选用 `deepseek-v4-flash`(1M 上下文,支持 Tool Calls / JSON Output,并发高、成本低);需要更强推理可设 `AI_MODEL=deepseek-v4-pro`
+- 在后台「站点设置 → AI 助手」填写 DeepSeek API Key,或设置 `DEEPSEEK_API_KEY`,即可直连 `api.deepseek.com`,默认选用 `deepseek-v4-flash`(1M 上下文,支持 Tool Calls / JSON Output,并发高、成本低);需要更强推理可在后台模型 ID 填 `deepseek-v4-pro`,或设 `AI_MODEL=deepseek-v4-pro`
 - 兼容旧模型名:`AI_MODEL` 填 `deepseek-chat` / `deepseek-reasoner`(官方 2026/07/24 弃用)会自动映射到 `deepseek-v4-flash`,其中 `deepseek-reasoner` 自动开启思考模式,启动日志会提示迁移
 - 思考模式:`AI_THINKING=high` / `xhigh` 分别对应 DeepSeek 官方 thinking 的 high / max 档
 - 多个提供商同时可用时,优先选择 DeepSeek 官方 API

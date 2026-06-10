@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { articleSearchCondition, db } from '../db.js';
 import { audit, requireAuth, requireRole } from '../auth.js';
+import { getSafeSettings } from '../settings.js';
+import { resetAssistantSessions } from '../assistant/manager.js';
 
 export const settingsRouter = Router();
 export const dashboardRouter = Router();
@@ -8,20 +10,53 @@ export const auditRouter = Router();
 export const publicRouter = Router();
 
 // ---- 站点设置 ----
-settingsRouter.get('/', requireAuth, (_req, res) => {
-  const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
-  res.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+settingsRouter.get('/', requireAuth, (req, res) => {
+  res.json(getSafeSettings(req.user?.role === 'admin'));
 });
 
-settingsRouter.put('/', requireAuth, requireRole('admin'), (req, res) => {
+const AI_PROVIDERS = new Set(['', 'deepseek', 'openai', 'anthropic']);
+const AI_THINKING_LEVELS = new Set(['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+
+settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
   const body = req.body ?? {};
   const upsert = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
-  for (const [key, value] of Object.entries(body)) {
-    if (typeof value === 'string' && /^[a-z0-9_]+$/i.test(key)) upsert.run(key, value);
+  const del = db.prepare(`DELETE FROM settings WHERE key = ?`);
+  const changed: string[] = [];
+  let aiChanged = false;
+
+  if (body.ai_provider !== undefined && !AI_PROVIDERS.has(String(body.ai_provider))) {
+    res.status(400).json({ error: 'AI 提供商无效' });
+    return;
   }
-  audit(req, 'update_settings', '', Object.keys(body).join(','));
-  const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
-  res.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+  if (body.ai_thinking !== undefined && !AI_THINKING_LEVELS.has(String(body.ai_thinking))) {
+    res.status(400).json({ error: 'AI 思考强度无效' });
+    return;
+  }
+  if (typeof body.ai_api_key === 'string' && body.ai_api_key.trim() && !String(body.ai_provider ?? '').trim()) {
+    res.status(400).json({ error: '填写 API Key 时请选择 AI 提供商' });
+    return;
+  }
+
+  for (const [key, value] of Object.entries(body)) {
+    if (!/^[a-z0-9_]+$/i.test(key) || typeof value !== 'string') continue;
+    if (key === 'ai_api_key_set') continue;
+    if (key === 'ai_api_key_clear') {
+      if (value === '1') {
+        del.run('ai_api_key');
+        changed.push('ai_api_key');
+        aiChanged = true;
+      }
+      continue;
+    }
+    if (key === 'ai_api_key' && value.trim() === '') continue;
+    upsert.run(key, value.trim());
+    changed.push(key);
+    if (key.startsWith('ai_')) aiChanged = true;
+  }
+
+  if (aiChanged) await resetAssistantSessions();
+  audit(req, 'update_settings', '', changed.join(','));
+  res.json(getSafeSettings(true));
 });
 
 // ---- 仪表盘统计 ----

@@ -14,14 +14,11 @@ import { config } from '../config.js';
 import { db } from '../db.js';
 import type { AuthUser } from '../auth.js';
 import { buildAssistantTools } from './tools.js';
+import { getSettings } from '../settings.js';
 
 /** 独立的 agent 目录,避免加载用户机器上 ~/.pi 的全局扩展/技能 */
 const AGENT_DIR = path.join(config.dataDir, 'pi-agent');
 fs.mkdirSync(AGENT_DIR, { recursive: true });
-
-/** 凭证仍走默认位置(~/.pi/agent/auth.json + 环境变量),与 pi CLI 共享 */
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
 
 export interface AssistantModelInfo {
   provider: string;
@@ -41,10 +38,33 @@ const DEEPSEEK_LEGACY_MODELS: Record<string, { id: string; thinking?: ThinkingLe
   'deepseek-reasoner': { id: 'deepseek-v4-flash', thinking: 'high' },
 };
 
-async function resolveModel() {
-  const provider = process.env.AI_PROVIDER;
-  let modelId = process.env.AI_MODEL;
+interface AiRuntimeConfig {
+  provider?: string;
+  modelId?: string;
+  thinking?: ThinkingLevel;
+  apiKey?: string;
+}
+
+function getAiRuntimeConfig(): AiRuntimeConfig {
+  const settings = getSettings();
+  return {
+    provider: settings.ai_provider || process.env.AI_PROVIDER,
+    modelId: settings.ai_model || process.env.AI_MODEL,
+    thinking: THINKING_LEVELS.includes(settings.ai_thinking as ThinkingLevel)
+      ? (settings.ai_thinking as ThinkingLevel)
+      : (process.env.AI_THINKING as ThinkingLevel | undefined),
+    apiKey: settings.ai_api_key || undefined,
+  };
+}
+
+async function resolveModel(authStorage: AuthStorage, modelRegistry: ModelRegistry, aiConfig: AiRuntimeConfig) {
+  const provider = aiConfig.provider;
+  let modelId = aiConfig.modelId;
   let defaultThinking: ThinkingLevel | undefined;
+
+  if (aiConfig.apiKey && provider) {
+    authStorage.setRuntimeApiKey(provider, aiConfig.apiKey);
+  }
 
   if (modelId && (!provider || provider === 'deepseek')) {
     const legacy = DEEPSEEK_LEGACY_MODELS[modelId];
@@ -57,17 +77,25 @@ async function resolveModel() {
 
   if (provider && modelId) {
     const model = modelRegistry.find(provider, modelId);
-    if (!model) throw new Error(`未找到模型 ${provider}/${modelId},请检查 AI_PROVIDER / AI_MODEL 环境变量`);
+    if (!model) throw new Error(`未找到模型 ${provider}/${modelId},请检查 AI 提供商与模型 ID`);
+    if (!modelRegistry.hasConfiguredAuth(model)) throw new Error(`已选择 ${provider}/${modelId},但该提供商未配置可用凭证`);
     return { model, defaultThinking };
   }
 
   const available = await modelRegistry.getAvailable();
   if (available.length === 0) {
     throw new Error(
-      '未配置任何 AI 模型凭证。请设置环境变量(如 DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY),' +
+      '未配置任何 AI 模型凭证。管理员可在后台「站点设置 → AI 助手」填写 API Key,也可以设置环境变量(如 DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY),' +
         '或先用 pi CLI 登录(凭证存于 ~/.pi/agent/auth.json),然后重启服务。' +
-        '可选用 AI_PROVIDER + AI_MODEL 指定模型。'
+        '可选用 AI 提供商 + 模型 ID 指定模型。'
     );
+  }
+
+  if (provider) {
+    const matches = available.filter((m) => m.provider === provider);
+    const model = provider === 'deepseek' ? (matches.find((m) => m.id === 'deepseek-v4-flash') ?? matches[0]) : matches[0];
+    if (!model) throw new Error(`已选择 ${provider},但该提供商未配置可用凭证`);
+    return { model, defaultThinking };
   }
 
   // 只指定了 AI_MODEL:在可用提供商中找,官方 deepseek 优先
@@ -125,7 +153,10 @@ function userSessionDir(userId: number): string {
 }
 
 async function createEntry(user: AuthUser): Promise<Entry> {
-  const { model, defaultThinking } = await resolveModel();
+  const authStorage = AuthStorage.create();
+  const modelRegistry = ModelRegistry.create(authStorage);
+  const aiConfig = getAiRuntimeConfig();
+  const { model, defaultThinking } = await resolveModel(authStorage, modelRegistry, aiConfig);
   const settingsManager = SettingsManager.inMemory({});
   const sessionDir = userSessionDir(user.id);
   fs.mkdirSync(sessionDir, { recursive: true });
@@ -142,12 +173,11 @@ async function createEntry(user: AuthUser): Promise<Entry> {
   });
   await loader.reload();
 
-  const envThinking = process.env.AI_THINKING as ThinkingLevel | undefined;
   const { session } = await createAgentSession({
     cwd: AGENT_DIR,
     agentDir: AGENT_DIR,
     model,
-    thinkingLevel: envThinking && THINKING_LEVELS.includes(envThinking) ? envThinking : (defaultThinking ?? 'off'),
+    thinkingLevel: aiConfig.thinking && THINKING_LEVELS.includes(aiConfig.thinking) ? aiConfig.thinking : (defaultThinking ?? 'off'),
     authStorage,
     modelRegistry,
     noTools: 'builtin',
@@ -194,4 +224,10 @@ export async function resetAssistantSession(userId: number): Promise<void> {
   } catch {
     /* 目录不存在等情况忽略 */
   }
+}
+
+/** 重置全部用户的 AI 会话。用于管理员更新模型或凭证后让配置立即生效。 */
+export async function resetAssistantSessions(): Promise<void> {
+  const userIds = [...sessions.keys()];
+  await Promise.all(userIds.map((userId) => resetAssistantSession(userId)));
 }
