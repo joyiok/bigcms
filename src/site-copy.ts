@@ -15,9 +15,9 @@ export const SITE_COPY_DEFAULTS: Record<string, string> = {
   hero_secondary_href: '/contact',
   hero_quick_title: '快速入口',
   hero_image: '',
-  home_value_1: '',
-  home_value_2: '',
-  home_value_3: '',
+  home_value_1: '自托管部署 · 数据保存在企业自己的服务器,不依赖第三方云服务',
+  home_value_2: '完整审计追踪 · 每一次发布、修改与登录都有可追溯的操作记录',
+  home_value_3: '一分钟发布 · 从草稿到上线只需一次审阅,内容团队即开即用',
   home_about_title: '',
   home_about_text: '',
   hero_notices_title: '公司要闻',
@@ -131,4 +131,7 @@ export function ensureSiteCopySettings(db: { prepare: (sql: string) => { get: (k
     if (!get.get(key)) insert.run(key, value);
   }
   db.prepare(`UPDATE settings SET value = ? WHERE key = 'home_news_title' AND value = '最新动态'`).run('前沿洞察');
+  for (const key of ['home_value_1', 'home_value_2', 'home_value_3'] as const) {
+    db.prepare(`UPDATE settings SET value = ? WHERE key = ? AND value = ''`).run(SITE_COPY_DEFAULTS[key], key);
+  }
 }

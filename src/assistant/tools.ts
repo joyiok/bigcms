@@ -602,17 +602,23 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
     })
   );
 
-  // ---- 联系人 ----
+  // ---- 联系人 / 销售线索 ----
+  const LEAD_STAGES = ['pending', 'contacted', 'qualified', 'converted', 'lost'];
+  const CONTACT_COLS = 'id, name, email, phone, company, message, status, stage, next_follow_up_at, source, created_at';
   tools.push(
     defineTool({
       name: 'list_contacts',
-      label: '联系人列表',
-      description: '查询前台用户提交的联系表单记录,支持按状态(new/read/archived)和关键词筛选。',
+      label: '联系人 / 销售线索列表',
+      description:
+        '查询前台联系表单提交的销售线索。支持按收件状态(new/read/archived)、线索阶段(pending 待跟进 / contacted 已联系 / qualified 已确认意向 / converted 已成交 / lost 已流失)、逾期待办(overdue)和关键词筛选。返回字段含 stage(阶段)与 next_follow_up_at(下次回访日期)。',
       parameters: Type.Object({
         page: Type.Optional(Type.Number({ description: '页码,默认 1' })),
         page_size: Type.Optional(Type.Number({ description: '每页条数,默认 20' })),
-        status: Type.Optional(Type.String({ description: 'new / read / archived' })),
-        q: Type.Optional(Type.String({ description: '搜索姓名/电话/邮箱/留言' })),
+        status: Type.Optional(Type.String({ description: '收件状态:new / read / archived' })),
+        stage: Type.Optional(Type.String({ description: `线索阶段:${LEAD_STAGES.join(' / ')}` })),
+        source: Type.Optional(Type.String({ description: '线索来源:form(前台表单)/ ai(AI 主动开发)' })),
+        overdue: Type.Optional(Type.Boolean({ description: '仅看逾期线索(回访日期已过且未成交/流失)' })),
+        q: Type.Optional(Type.String({ description: '搜索姓名/电话/邮箱/公司/留言' })),
       }),
       execute: async (_id, p) => {
         const page = Math.max(1, p.page ?? 1);
@@ -623,6 +629,17 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           conditions.push('status = ?');
           params.push(p.status);
         }
+        if (p.stage && LEAD_STAGES.includes(p.stage)) {
+          conditions.push('stage = ?');
+          params.push(p.stage);
+        }
+        if (p.source && ['form', 'ai'].includes(p.source)) {
+          conditions.push('source = ?');
+          params.push(p.source);
+        }
+        if (p.overdue) {
+          conditions.push(`next_follow_up_at != '' AND next_follow_up_at < date('now', 'localtime') AND stage NOT IN ('converted', 'lost')`);
+        }
         if (p.q) {
           conditions.push('(name LIKE ? OR email LIKE ? OR phone LIKE ? OR company LIKE ? OR message LIKE ?)');
           const kw = `%${p.q.slice(0, 100)}%`;
@@ -631,9 +648,46 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
         const total = (db.prepare(`SELECT COUNT(*) AS c FROM contacts${where}`).get(...params) as { c: number }).c;
         const items = db
-          .prepare(`SELECT id, name, email, phone, company, message, status, created_at FROM contacts${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+          .prepare(`SELECT ${CONTACT_COLS} FROM contacts${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
           .all(...params, pageSize, (page - 1) * pageSize);
         return ok({ items, total, page, page_size: pageSize });
+      },
+    }),
+    defineTool({
+      name: 'get_contact',
+      label: '线索详情',
+      description: '查看单条销售线索的完整信息与全部跟进记录(时间线,新→旧)。',
+      parameters: Type.Object({
+        id: Type.Number({ description: '联系人 / 线索 ID' }),
+      }),
+      execute: async (_id, p) => {
+        const row = db.prepare(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = ?`).get(p.id);
+        if (!row) throw new Error('联系人记录不存在');
+        const notes = db
+          .prepare(`SELECT id, author, note, created_at FROM contact_notes WHERE contact_id = ? ORDER BY id DESC`)
+          .all(p.id);
+        return ok({ ...row, notes });
+      },
+    }),
+    defineTool({
+      name: 'lead_stats',
+      label: '线索漏斗统计',
+      description: '按阶段统计销售线索数量(漏斗视图),并返回逾期未跟进数量,用于汇报与复盘。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        const byStage = Object.fromEntries(LEAD_STAGES.map((s) => [s, 0]));
+        for (const r of db.prepare(`SELECT stage, COUNT(*) AS c FROM contacts GROUP BY stage`).all() as { stage: string; c: number }[]) {
+          byStage[r.stage] = r.c;
+        }
+        const overdue = (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS c FROM contacts WHERE next_follow_up_at != '' AND next_follow_up_at < date('now', 'localtime') AND stage NOT IN ('converted', 'lost')`
+            )
+            .get() as { c: number }
+        ).c;
+        const total = (db.prepare(`SELECT COUNT(*) AS c FROM contacts`).get() as { c: number }).c;
+        return ok({ total, by_stage: byStage, overdue });
       },
     })
   );
@@ -642,18 +696,98 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
     tools.push(
       defineTool({
         name: 'update_contact',
-        label: '更新联系人',
-        description: '更新联系人记录状态(new/read/archived)。',
+        label: '更新线索',
+        description:
+          '更新销售线索:收件状态(status)、线索阶段(stage)、下次回访日期(next_follow_up_at,YYYY-MM-DD,空字符串清除)。至少提供一个字段。',
         parameters: Type.Object({
-          id: Type.Number({ description: '联系人 ID(必填)' }),
-          status: Type.String({ description: 'new / read / archived(必填)' }),
+          id: Type.Number({ description: '联系人 / 线索 ID(必填)' }),
+          status: Type.Optional(Type.String({ description: '收件状态:new / read / archived' })),
+          stage: Type.Optional(Type.String({ description: `线索阶段:${LEAD_STAGES.join(' / ')}` })),
+          next_follow_up_at: Type.Optional(Type.String({ description: '下次回访日期 YYYY-MM-DD,空字符串清除' })),
         }),
         execute: async (_id, p) => {
-          if (!['new', 'read', 'archived'].includes(p.status)) throw new Error('状态无效');
-          const result = db.prepare(`UPDATE contacts SET status = ? WHERE id = ?`).run(p.status, p.id);
+          const sets: string[] = [];
+          const params: string[] = [];
+          if (p.status !== undefined) {
+            if (!['new', 'read', 'archived'].includes(p.status)) throw new Error('状态无效');
+            sets.push('status = ?');
+            params.push(p.status);
+          }
+          if (p.stage !== undefined) {
+            if (!LEAD_STAGES.includes(p.stage)) throw new Error(`线索阶段无效,可选:${LEAD_STAGES.join(' / ')}`);
+            sets.push('stage = ?');
+            params.push(p.stage);
+          }
+          if (p.next_follow_up_at !== undefined) {
+            if (p.next_follow_up_at !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(p.next_follow_up_at)) {
+              throw new Error('回访日期格式应为 YYYY-MM-DD');
+            }
+            sets.push('next_follow_up_at = ?');
+            params.push(p.next_follow_up_at);
+          }
+          if (!sets.length) throw new Error('没有可更新的字段');
+          const result = db.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).run(...params, p.id);
           if (!result.changes) throw new Error('联系人记录不存在');
-          auditAi(user, 'update_contact', `contact:${p.id}`, p.status);
-          return ok(db.prepare(`SELECT id, name, email, phone, company, message, status, created_at FROM contacts WHERE id = ?`).get(p.id));
+          auditAi(user, 'update_contact', `contact:${p.id}`, sets.map((s, i) => `${s.split(' ')[0]}=${params[i]}`).join(' '));
+          return ok(db.prepare(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = ?`).get(p.id));
+        },
+      }),
+      defineTool({
+        name: 'create_lead',
+        label: '创建销售线索',
+        description:
+          '把主动开发的潜在客户(通常是一家公司)存入线索池,来源记为 ai。创建前必须先用 list_contacts 按公司名/电话查重,避免重复线索。message 字段写清线索背景:目标公司是做什么的、为什么是潜在客户、信息来源。',
+        parameters: Type.Object({
+          name: Type.String({ description: '联系人姓名;没有具体联系人时填公司名(必填)' }),
+          company: Type.Optional(Type.String({ description: '公司名称' })),
+          phone: Type.Optional(Type.String({ description: '电话' })),
+          email: Type.Optional(Type.String({ description: '邮箱' })),
+          message: Type.String({ description: '线索背景与开发依据(必填):公司业务、判断为潜在客户的理由、信息来源' }),
+          next_follow_up_at: Type.Optional(Type.String({ description: '计划首次触达日期 YYYY-MM-DD' })),
+        }),
+        execute: async (_id, p) => {
+          const name = p.name.trim().slice(0, 80);
+          const message = p.message.trim().slice(0, 2000);
+          if (!name) throw new Error('联系人/公司名不能为空');
+          if (!message) throw new Error('线索背景不能为空');
+          if (p.next_follow_up_at && !/^\d{4}-\d{2}-\d{2}$/.test(p.next_follow_up_at)) {
+            throw new Error('首次触达日期格式应为 YYYY-MM-DD');
+          }
+          const inserted = db
+            .prepare(
+              `INSERT INTO contacts (name, email, phone, company, message, status, stage, next_follow_up_at, source)
+               VALUES (?, ?, ?, ?, ?, 'read', 'pending', ?, 'ai')`
+            )
+            .run(
+              name,
+              (p.email ?? '').trim().slice(0, 120),
+              (p.phone ?? '').trim().slice(0, 40),
+              (p.company ?? '').trim().slice(0, 120),
+              message,
+              p.next_follow_up_at ?? ''
+            );
+          auditAi(user, 'create_lead', `contact:${inserted.lastInsertRowid}`, `${name}${p.company ? ` (${p.company})` : ''}`);
+          return ok(db.prepare(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = ?`).get(inserted.lastInsertRowid));
+        },
+      }),
+      defineTool({
+        name: 'add_contact_note',
+        label: '添加跟进记录',
+        description: '为某条销售线索追加一条跟进记录(沟通纪要、客户反馈、下一步行动等),会记入线索时间线。',
+        parameters: Type.Object({
+          id: Type.Number({ description: '联系人 / 线索 ID(必填)' }),
+          note: Type.String({ description: '跟进内容(必填,≤2000 字)' }),
+        }),
+        execute: async (_id, p) => {
+          const note = p.note.trim().slice(0, 2000);
+          if (!note) throw new Error('跟进内容不能为空');
+          const contact = db.prepare(`SELECT id FROM contacts WHERE id = ?`).get(p.id);
+          if (!contact) throw new Error('联系人记录不存在');
+          const inserted = db
+            .prepare(`INSERT INTO contact_notes (contact_id, author, note) VALUES (?, ?, ?)`)
+            .run(p.id, user.display_name || user.username, note);
+          auditAi(user, 'add_contact_note', `contact:${p.id}`, note.slice(0, 100));
+          return ok(db.prepare(`SELECT id, author, note, created_at FROM contact_notes WHERE id = ?`).get(inserted.lastInsertRowid));
         },
       }),
       defineTool({

@@ -114,7 +114,18 @@ CREATE TABLE IF NOT EXISTS contacts (
   company    TEXT NOT NULL DEFAULT '',
   message    TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'read', 'archived')),
+  stage      TEXT NOT NULL DEFAULT 'pending',
+  next_follow_up_at TEXT NOT NULL DEFAULT '',
+  source     TEXT NOT NULL DEFAULT 'form',
   ip         TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS contact_notes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  author     TEXT NOT NULL DEFAULT '',
+  note       TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -124,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_revisions_article ON article_revisions(article_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
 CREATE INDEX IF NOT EXISTS idx_contacts_created ON contacts(created_at);
+CREATE INDEX IF NOT EXISTS idx_contact_notes_contact ON contact_notes(contact_id);
 `);
 
 /** 修订历史:每篇文章保留的最大版本数 */
@@ -158,6 +170,23 @@ try {
 } catch {
   /* 列已存在 */
 }
+try {
+  db.exec(`ALTER TABLE contacts ADD COLUMN stage TEXT NOT NULL DEFAULT 'pending'`);
+} catch {
+  /* 列已存在 */
+}
+try {
+  db.exec(`ALTER TABLE contacts ADD COLUMN next_follow_up_at TEXT NOT NULL DEFAULT ''`);
+} catch {
+  /* 列已存在 */
+}
+try {
+  db.exec(`ALTER TABLE contacts ADD COLUMN source TEXT NOT NULL DEFAULT 'form'`);
+} catch {
+  /* 列已存在 */
+}
+// stage 列由上方迁移补齐后才能建索引,故不能放进主 schema
+db.exec(`CREATE INDEX IF NOT EXISTS idx_contacts_stage ON contacts(stage)`);
 
 ensureSiteCopySettings(db);
 ensureProductsCategory(db);

@@ -28,6 +28,17 @@ function getSettings(): Record<string, string> {
 
 const fmtDate = (s: string | null) => (s ? s.slice(0, 10) : '');
 
+/** 内页面包屑(末项为当前页) */
+function crumbs(items: { label: string; href?: string }[]): string {
+  return `<nav class="crumbs" aria-label="面包屑">${items
+    .map((it, i) =>
+      it.href && i < items.length - 1
+        ? `<a href="${esc(it.href)}">${esc(it.label)}</a>`
+        : `<span aria-current="page">${esc(it.label)}</span>`
+    )
+    .join('<span class="sep">/</span>')}</nav>`;
+}
+
 const PRODUCTS_CATEGORY_SLUG = 'products';
 
 function renderHeroAside(settings: Record<string, string>, notices: ArticleRow[]): string {
@@ -319,7 +330,6 @@ siteRouter.get('/', (req, res) => {
 
   const body = `
 <section class="hero">
-  <div class="hero-bg" aria-hidden="true"></div>
   <canvas id="scope" aria-hidden="true"></canvas>
   <div class="hero-inner">
     <div class="hero-copy">
@@ -358,7 +368,6 @@ ${featured ? `
       <a class="news-row" href="/news/${esc(a.slug)}">
         <span class="news-date">${fmtDate(a.published_at)}</span>
         <span class="news-title">${esc(a.title)}</span>
-        <span class="news-arrow">→</span>
       </a>`
         )
         .join('')}
@@ -390,9 +399,9 @@ ${showCategories ? `
         .map(
           (c) => `
       <a class="cat-item" href="/news?category=${esc(c.slug)}">
-        <span class="cat-top"><span class="cat-name">${esc(c.name)}</span><span class="cat-arrow">↗</span></span>
+        <span class="cat-name">${esc(c.name)}</span>
         <span class="cat-desc">${esc(c.description)}</span>
-        <span class="cat-count">${c.n} 篇内容</span>
+        <span class="cat-count">${c.n} 篇</span>
       </a>`
         )
         .join('')}
@@ -403,8 +412,10 @@ ${showCategories ? `
 <section class="cta-band">
   <div class="cta-band-inner">
     <h2>${esc(siteCopy(settings, 'cta_title'))}</h2>
-    <p>${esc(siteCopy(settings, 'cta_text'))}</p>
-    <a class="btn-light" href="${esc(siteHref(settings, 'cta_href', '/news'))}">${esc(siteCopy(settings, 'cta_button'))}</a>
+    <div class="cta-band-side">
+      <p>${esc(siteCopy(settings, 'cta_text'))}</p>
+      <a class="btn-light" href="${esc(siteHref(settings, 'cta_href', '/news'))}">${esc(siteCopy(settings, 'cta_button'))}</a>
+    </div>
   </div>
 </section>
 <script src="/scope.js" defer></script>`;
@@ -466,7 +477,9 @@ siteRouter.get('/news', (req, res) => {
     : '';
 
   const body = `
+<div class="page-head-band">
 <section class="page-head">
+  ${crumbs([{ label: siteCopy(settings, 'nav_home'), href: '/' }, { label: siteCopy(settings, 'nav_news') }])}
   <h1>${esc(siteCopy(settings, 'nav_news'))}</h1>
   <form class="site-search" action="/news" method="get" role="search">
     ${categorySlug ? `<input type="hidden" name="category" value="${esc(categorySlug)}">` : ''}
@@ -479,6 +492,7 @@ siteRouter.get('/news', (req, res) => {
   </nav>
   ${q || tagSlug ? `<p class="filter-state">${q ? `「${esc(q)}」的搜索结果` : `标签「#${esc(tagName)}」下的内容`},共 ${total} 篇 <a href="/news">清除筛选</a></p>` : ''}
 </section>
+</div>
 <section class="section">
   ${items.length ? `<div class="article-list">
     ${items.map((a) => `
@@ -568,6 +582,14 @@ siteRouter.get('/news/:slug', (req, res) => {
   const body = `
 <article class="article-page">
   <header class="article-head">
+    ${crumbs([
+      { label: siteCopy(settings, 'nav_home'), href: '/' },
+      { label: siteCopy(settings, 'nav_news'), href: '/news' },
+      ...(article.category_name && article.category_slug
+        ? [{ label: article.category_name, href: `/news?category=${article.category_slug}` }]
+        : []),
+      { label: article.title },
+    ])}
     <div class="meta-line">
       ${article.category_slug ? `<a href="/news?category=${esc(article.category_slug)}">${esc(article.category_name)}</a>` : esc(article.category_name || '动态')}
       · ${fmtDate(article.published_at)}${article.author_name ? ` · ${esc(article.author_name)}` : ''} · ${article.views + 1} 次浏览
@@ -670,7 +692,9 @@ siteRouter.get('/products', (req, res) => {
   const pageTitle = siteCopy(settings, 'nav_products');
 
   const body = `
+<div class="page-head-band">
 <section class="page-head">
+  ${crumbs([{ label: siteCopy(settings, 'nav_home'), href: '/' }, { label: pageTitle }])}
   <h1>${esc(pageTitle)}</h1>
   <form class="site-search" action="/products" method="get" role="search">
     <input type="search" name="q" value="${esc(q)}" placeholder="搜索商品…" aria-label="搜索商品">
@@ -678,6 +702,7 @@ siteRouter.get('/products', (req, res) => {
   </form>
   ${q ? `<p class="filter-state">「${esc(q)}」的搜索结果,共 ${total} 篇 <a href="/products">清除筛选</a></p>` : ''}
 </section>
+</div>
 <section class="section">
   ${items.length ? `<div class="article-list">
     ${items.map((a) => `
@@ -728,10 +753,13 @@ siteRouter.get('/contact', (req, res) => {
   const settings = getSettings();
   const pageTitle = siteCopy(settings, 'contact_title');
   const body = `
+<div class="page-head-band">
 <section class="page-head">
+  ${crumbs([{ label: siteCopy(settings, 'nav_home'), href: '/' }, { label: pageTitle }])}
   <h1>${esc(pageTitle)}</h1>
-  <p class="hero-sub">${esc(siteCopy(settings, 'contact_intro'))}</p>
+  <p class="hero-sub" style="margin-bottom:0">${esc(siteCopy(settings, 'contact_intro'))}</p>
 </section>
+</div>
 <section class="section contact-section">
   <form class="contact-form" id="contact-form" data-success="${esc(siteCopy(settings, 'contact_success'))}">
     <input type="text" name="website" class="contact-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">

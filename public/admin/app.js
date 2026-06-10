@@ -194,7 +194,7 @@ pages.dashboard = async () => {
       ${[
         ['文章总数', s.articles_total], ['已发布', s.articles_published], ['草稿', s.articles_draft],
         ['总浏览量', s.total_views], ['分类', s.categories], ['标签', s.tags], ['媒体文件', s.media], ['用户', s.users],
-        ['联系人', s.contacts], ['新留言', s.contacts_new],
+        ['销售线索', s.contacts], ['新留言', s.contacts_new],
       ].map(([label, num]) => `<div class="stat-card"><div class="num">${num}</div><div class="label">${label}</div></div>`).join('')}
     </div>
     <div class="card">
@@ -860,34 +860,63 @@ const AI_TOOL_LABELS = {
   delete_tag: '删除标签', list_media: '查询媒体库', delete_media: '删除媒体文件', get_settings: '查看设置', update_settings: '修改设置',
   list_users: '查询用户', create_user: '新建用户', update_user: '更新用户', delete_user: '删除用户',
   list_audit_logs: '查询审计日志', list_article_revisions: '查询修订历史', restore_article_revision: '恢复修订版本',
-  list_contacts: '查询联系人', update_contact: '更新联系人', delete_contact: '删除联系人',
+  list_contacts: '查询销售线索', get_contact: '查看线索详情', lead_stats: '线索漏斗统计', create_lead: '创建销售线索',
+  update_contact: '更新线索', add_contact_note: '添加跟进记录', delete_contact: '删除线索',
   web_search: '搜索引擎检索', browse_webpage: '浏览器抓取网页', search_companies: '企查查企业搜索',
 };
 
 const AI_SUGGESTIONS = [
+  '今天该跟进哪些销售线索?',
+  '线索漏斗统计,指出瓶颈',
   '写一篇产品更新公告(先存草稿)',
-  '列出所有草稿',
-  '把所有草稿都发布',
   '今天的站点数据概览',
 ];
 
-/** 极简 Markdown 渲染(仅粗体/行内代码/代码块/换行,输入先转义) */
+/** 轻量 Markdown 渲染:标题/列表/链接/粗体/代码,输入先转义,不引第三方库 */
 function mdLite(text) {
-  let s = esc(text);
-  s = s.replace(/```[\w-]*\n([\s\S]*?)```/g, (_, code) => `<pre>${code}</pre>`);
-  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  return s.replace(/\n/g, '<br>');
+  const blocks = [];
+  let s = esc(text).replace(/```[\w-]*\n?([\s\S]*?)```/g, (_, code) => {
+    blocks.push(`<pre>${code}</pre>`);
+    return `\u0000${blocks.length - 1}\u0000`;
+  });
+  s = s
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+|\/[^)\s]*)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of s.split('\n')) {
+    const ph = line.trim().match(/^\u0000(\d+)\u0000$/);
+    const ul = line.match(/^\s*[-*]\s+(.*)/);
+    const ol = line.match(/^\s*\d+[.、)]\s+(.*)/);
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (ul) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${ul[1]}</li>`); }
+    else if (ol) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${ol[1]}</li>`); }
+    else {
+      closeList();
+      if (ph) out.push(blocks[Number(ph[1])]);
+      else if (h) out.push(`<h4>${h[2]}</h4>`);
+      else if (/^\s*(---+|\*\*\*+)\s*$/.test(line)) out.push('<hr>');
+      else if (line.trim() !== '') out.push(`<p>${line}</p>`);
+    }
+  }
+  closeList();
+  return out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
 }
 
 let aiBusy = false;
 
-function aiRenderParts(el, parts) {
+function aiRenderParts(el, parts, typing = false) {
   el.innerHTML = parts.map((p) => {
     if (p.type === 'tool') return `<span class="ai-tool${p.error ? ' error' : ''}${p.done ? '' : ' running'}" ${p.args ? `title="${esc(p.args)}"` : ''}>${esc(AI_TOOL_LABELS[p.name] || p.name)}</span>`;
-    if (p.type === 'usage') return `<div class="ai-usage">${p.tokens.toLocaleString()} tokens${p.cost ? ` · $${p.cost.toFixed(4)}` : ''}</div>`;
+    if (p.type === 'compact') return `<span class="ai-tool${p.done ? '' : ' running'}" title="对话较长,自动总结早期内容以释放上下文">压缩上下文</span>`;
+    if (p.type === 'usage') {
+      const ctx = p.context && p.window ? ` · 上下文 ${Math.round((p.context / p.window) * 100)}%` : '';
+      return `<div class="ai-usage">${p.tokens ? `${p.tokens.toLocaleString()} tokens` : ''}${p.cost ? ` · $${p.cost.toFixed(4)}` : ''}${ctx}</div>`;
+    }
     return `<div class="ai-md">${mdLite(p.text)}</div>`;
-  }).join('');
+  }).join('') + (typing ? '<span class="ai-typing"><i></i><i></i><i></i></span>' : '');
 }
 
 pages.assistant = async () => {
@@ -903,7 +932,7 @@ pages.assistant = async () => {
     ${status.ready ? '' : `<div class="card ai-offline"><strong>AI 助手未就绪</strong><p class="muted" style="margin-top:6px">${esc(status.error || '')}</p>${state.user.role === 'admin' ? '<p style="margin-top:12px"><a class="btn small" href="#/settings">配置 AI 助手</a></p>' : ''}</div>`}
     <div class="ai-chat">
       <div class="ai-messages" id="ai-messages">
-        <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网的全部内容:写文章、发布、改分类标签、调站点设置等。</div></div></div>
+        <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网内容(写文章、发布、调设置),也能做销售运营:跟进销售线索、统计漏斗、主动开发潜在客户。</div></div></div>
         ${status.ready ? `<div class="ai-suggestions" id="ai-suggestions">${AI_SUGGESTIONS.map((s) => `<button type="button" class="ai-chip" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
       </div>
       <form class="ai-input" id="ai-form">
@@ -913,7 +942,9 @@ pages.assistant = async () => {
     </div>`;
 
   const box = $('#ai-messages');
-  const scroll = () => { box.scrollTop = box.scrollHeight; };
+  // 用户上翻阅读历史时不抢滚动;贴近底部才自动跟随
+  const nearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const scroll = (force) => { if (force || nearBottom()) box.scrollTop = box.scrollHeight; };
 
   const addMsg = (role) => {
     const div = document.createElement('div');
@@ -934,11 +965,11 @@ pages.assistant = async () => {
         if (m.text) parts.push({ type: 'text', text: m.text });
         aiRenderParts(bubble, parts);
       }
-      scroll();
+      scroll(true);
     } catch { /* 历史加载失败不阻塞聊天 */ }
     document.querySelectorAll('#ai-suggestions .ai-chip').forEach((b) => (b.onclick = () => {
       $('#ai-text').value = b.dataset.q;
-      $('#ai-text').focus();
+      send();
     }));
   }
 
@@ -955,6 +986,7 @@ pages.assistant = async () => {
     if (!text || aiBusy) return;
     aiBusy = true;
     $('#ai-text').value = '';
+    $('#ai-text').style.height = '';
     $('#ai-suggestions')?.remove();
     const sendBtn0 = $('#ai-send');
     sendBtn0.textContent = '停止';
@@ -964,7 +996,8 @@ pages.assistant = async () => {
     const bubble = addMsg('assistant');
     bubble.innerHTML = '<span class="ai-typing"><i></i><i></i><i></i></span>';
     const parts = [];
-    scroll();
+    let streamDone = false;
+    scroll(true);
 
     try {
       const res = await fetch('/api/assistant/chat', {
@@ -989,12 +1022,22 @@ pages.assistant = async () => {
         } else if (ev === 'tool_end') {
           const t = [...parts].reverse().find((p) => p.type === 'tool' && p.name === data.name && !p.done);
           if (t) { t.done = true; t.error = data.isError; }
+        } else if (ev === 'compact_start') {
+          parts.push({ type: 'compact', done: false });
+        } else if (ev === 'compact_end') {
+          const c = [...parts].reverse().find((p) => p.type === 'compact' && !p.done);
+          if (c) c.done = true;
         } else if (ev === 'done') {
-          if (data.tokens) parts.push({ type: 'usage', tokens: data.tokens, cost: data.cost || 0 });
+          streamDone = true;
+          if (data.tokens || data.context) parts.push({ type: 'usage', tokens: data.tokens || 0, cost: data.cost || 0, context: data.context, window: data.window });
         } else if (ev === 'error') {
+          streamDone = true;
           parts.push({ type: 'text', text: `⚠️ ${data.message}` });
+        } else if (ev === 'ping') {
+          return;
         }
-        aiRenderParts(bubble, parts);
+        // 流式过程中保留打字指示,工具间隙也能看出"还在干活"
+        aiRenderParts(bubble, parts, !streamDone);
         scroll();
       };
       while (true) {
@@ -1014,6 +1057,7 @@ pages.assistant = async () => {
         }
       }
       if (parts.length === 0) aiRenderParts(bubble, [{ type: 'text', text: '(无回复)' }]);
+      else aiRenderParts(bubble, parts);
     } catch (err) {
       aiRenderParts(bubble, [...parts, { type: 'text', text: `⚠️ ${err.message}` }]);
     } finally {
@@ -1024,6 +1068,7 @@ pages.assistant = async () => {
         sendBtn.textContent = '发送';
         sendBtn.classList.remove('stop');
       }
+      $('#ai-text')?.focus();
       scroll();
     }
   };
@@ -1036,67 +1081,131 @@ pages.assistant = async () => {
   $('#ai-text').onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
+  // 输入框随内容自动增高(上限约 6 行)
+  $('#ai-text').oninput = (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 150)}px`;
+  };
 };
 
 // ---------- 审计日志 ----------
 const CONTACT_STATUS_TEXT = { new: '新留言', read: '已读', archived: '已归档' };
+const LEAD_STAGE_TEXT = { pending: '待跟进', contacted: '已联系', qualified: '已确认意向', converted: '已成交', lost: '已流失' };
+const LEAD_STAGE_BADGE = { pending: 'draft', contacted: 'active', qualified: 'active', converted: 'active', lost: 'disabled' };
 
 pages.contacts = async (query = { page: 1 }) => {
   if (typeof query === 'number') query = { page: query };
   const params = new URLSearchParams({ page: query.page || 1 });
   if (query.status) params.set('status', query.status);
+  if (query.stage) params.set('stage', query.stage);
+  if (query.overdue) params.set('overdue', '1');
   if (query.q) params.set('q', query.q);
   const data = await api(`/contacts?${params}`);
+  const today = new Date().toISOString().slice(0, 10);
+  const isOverdue = (c) => c.next_follow_up_at && c.next_follow_up_at < today && c.stage !== 'converted' && c.stage !== 'lost';
   $('#main').innerHTML = `
-    <div class="page-header"><h2>联系人管理</h2></div>
+    <div class="page-header"><h2>销售线索</h2></div>
     <div class="toolbar">
+      <select id="f-stage">
+        <option value="">全部阶段</option>
+        ${Object.entries(LEAD_STAGE_TEXT).map(([v, t]) => `<option value="${v}" ${query.stage === v ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
       <select id="f-status">
         <option value="">全部状态</option>
         ${Object.entries(CONTACT_STATUS_TEXT).map(([v, t]) => `<option value="${v}" ${query.status === v ? 'selected' : ''}>${t}</option>`).join('')}
       </select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+        <input type="checkbox" id="f-overdue" ${query.overdue ? 'checked' : ''}>仅看逾期
+      </label>
       <input type="search" id="f-q" placeholder="搜索姓名/电话/邮箱/留言…" value="${esc(query.q || '')}">
       <button class="btn" id="btn-filter">筛选</button>
     </div>
-    <table><thead><tr><th>姓名</th><th>电话</th><th>邮箱</th><th>公司</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody>
+    <table><thead><tr><th>姓名</th><th>公司</th><th>电话</th><th>来源</th><th>阶段</th><th>下次回访</th><th>状态</th><th>提交时间</th><th>操作</th></tr></thead><tbody>
       ${data.items.map((c) => `<tr>
-        <td>${esc(c.name)}</td><td>${esc(c.phone || '-')}</td><td>${esc(c.email || '-')}</td><td>${esc(c.company || '-')}</td>
+        <td>${esc(c.name)}</td><td>${esc(c.company || '-')}</td><td>${esc(c.phone || '-')}</td>
+        <td><span class="badge ${c.source === 'ai' ? 'active' : 'disabled'}">${c.source === 'ai' ? 'AI 开发' : '表单'}</span></td>
+        <td><span class="badge ${LEAD_STAGE_BADGE[c.stage] || 'draft'}">${LEAD_STAGE_TEXT[c.stage] || c.stage}</span></td>
+        <td>${c.next_follow_up_at ? `<span ${isOverdue(c) ? 'style="color:var(--danger,#c0392b);font-weight:600"' : ''}>${esc(c.next_follow_up_at)}${isOverdue(c) ? ' ⚠' : ''}</span>` : '<span class="muted">-</span>'}</td>
         <td><span class="badge ${c.status === 'new' ? 'draft' : c.status === 'read' ? 'active' : 'disabled'}">${CONTACT_STATUS_TEXT[c.status] || c.status}</span></td>
         <td>${fmtDate(c.created_at)}</td>
         <td><button class="btn small" data-view="${c.id}">查看</button>${canEdit() ? ` <button class="btn small danger" data-del="${c.id}">删除</button>` : ''}</td>
-      </tr>`).join('') || '<tr><td colspan="7" class="muted">暂无联系人</td></tr>'}
+      </tr>`).join('') || '<tr><td colspan="9" class="muted">暂无线索</td></tr>'}
     </tbody></table>
     <div id="pager"></div>`;
 
   const show = async (id) => {
     const c = await api(`/contacts/${id}`);
     const mask = openModal(`
-      <h3>联系人:${esc(c.name)}</h3>
+      <h3>线索:${esc(c.name)}</h3>
       <div class="form-grid">
         <div class="form-row"><label>电话</label><div>${esc(c.phone || '-')}</div></div>
         <div class="form-row"><label>邮箱</label><div>${esc(c.email || '-')}</div></div>
         <div class="form-row"><label>公司</label><div>${esc(c.company || '-')}</div></div>
+        <div class="form-row"><label>来源</label><div>${c.source === 'ai' ? 'AI 主动开发' : '前台表单'}</div></div>
         <div class="form-row"><label>提交时间</label><div>${fmtDate(c.created_at)}</div></div>
         <div class="form-row"><label>IP</label><div class="muted">${esc(c.ip || '-')}</div></div>
         <div class="form-row"><label>留言</label><div style="white-space:pre-wrap">${esc(c.message)}</div></div>
-        ${canEdit() ? `<div class="form-row"><label>状态</label>
+        ${canEdit() ? `
+        <div class="form-row"><label>线索阶段</label>
+          <select id="contact-stage">
+            ${Object.entries(LEAD_STAGE_TEXT).map(([v, t]) => `<option value="${v}" ${c.stage === v ? 'selected' : ''}>${t}</option>`).join('')}
+          </select></div>
+        <div class="form-row"><label>下次回访</label><input type="date" id="contact-follow-up" value="${esc(c.next_follow_up_at || '')}"></div>
+        <div class="form-row"><label>状态</label>
           <select id="contact-status">
             ${Object.entries(CONTACT_STATUS_TEXT).map(([v, t]) => `<option value="${v}" ${c.status === v ? 'selected' : ''}>${t}</option>`).join('')}
-          </select></div>` : ''}
+          </select></div>` : `
+        <div class="form-row"><label>线索阶段</label><div>${LEAD_STAGE_TEXT[c.stage] || c.stage}</div></div>
+        <div class="form-row"><label>下次回访</label><div>${esc(c.next_follow_up_at || '-')}</div></div>`}
+        <div class="form-row"><label>跟进记录</label>
+          <div id="contact-notes" style="display:flex;flex-direction:column;gap:8px;max-height:220px;overflow-y:auto">
+            ${(c.notes || []).map((n) => `<div style="border:1px solid var(--border,#ddd);border-radius:6px;padding:8px 10px">
+              <div class="muted" style="font-size:12px;margin-bottom:2px">${esc(n.author || '-')} · ${fmtDate(n.created_at)}</div>
+              <div style="white-space:pre-wrap;font-size:13px">${esc(n.note)}</div>
+            </div>`).join('') || '<span class="muted">暂无跟进记录</span>'}
+          </div>
+          ${canEdit() ? `<div style="display:flex;gap:8px;margin-top:8px">
+            <input type="text" id="contact-note-input" placeholder="记录这次沟通的要点与下一步…" style="flex:1" maxlength="2000">
+            <button type="button" class="btn small" data-act="add-note">添加</button>
+          </div>` : ''}
+        </div>
         <div class="form-actions">
           <button type="button" class="btn" data-act="close">关闭</button>
-          ${canEdit() ? '<button type="button" class="btn primary" data-act="save">保存状态</button>' : ''}
+          ${canEdit() ? '<button type="button" class="btn primary" data-act="save">保存</button>' : ''}
         </div>
       </div>`);
     mask.querySelector('[data-act=close]').onclick = () => mask.remove();
+    mask.querySelector('[data-act=add-note]')?.addEventListener('click', async () => {
+      const input = mask.querySelector('#contact-note-input');
+      const note = input.value.trim();
+      if (!note) return;
+      try {
+        await api(`/contacts/${id}/notes`, { method: 'POST', body: { note } });
+        toast('已记录'); mask.remove(); show(id);
+      } catch (err) { toast(err.message, true); }
+    });
     mask.querySelector('[data-act=save]')?.addEventListener('click', async () => {
       try {
-        await api(`/contacts/${id}`, { method: 'PUT', body: { status: mask.querySelector('#contact-status').value } });
+        await api(`/contacts/${id}`, {
+          method: 'PUT',
+          body: {
+            status: mask.querySelector('#contact-status').value,
+            stage: mask.querySelector('#contact-stage').value,
+            next_follow_up_at: mask.querySelector('#contact-follow-up').value || '',
+          },
+        });
         toast('已保存'); mask.remove(); pages.contacts(query);
       } catch (err) { toast(err.message, true); }
     });
   };
 
-  const filter = () => pages.contacts({ page: 1, status: $('#f-status').value, q: $('#f-q').value.trim() });
+  const filter = () => pages.contacts({
+    page: 1,
+    status: $('#f-status').value,
+    stage: $('#f-stage').value,
+    overdue: $('#f-overdue').checked ? 1 : '',
+    q: $('#f-q').value.trim(),
+  });
   $('#btn-filter').onclick = filter;
   $('#f-q').onkeydown = (e) => { if (e.key === 'Enter') filter(); };
   document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => show(Number(b.dataset.view))));

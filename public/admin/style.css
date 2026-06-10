@@ -291,6 +291,14 @@ td a:hover { color: var(--primary); }
   padding: 10px 12px; margin: 6px 0; overflow-x: auto; font-size: 12.5px; line-height: 1.55;
 }
 .ai-md code { background: oklch(0.94 0.005 195); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.ai-md p { margin: 0 0 6px; }
+.ai-md p:last-child { margin-bottom: 0; }
+.ai-md h4 { margin: 10px 0 6px; font-size: 13.5px; font-weight: 700; }
+.ai-md ul, .ai-md ol { margin: 4px 0 8px; padding-left: 20px; }
+.ai-md li { margin-bottom: 3px; }
+.ai-md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.ai-md a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.ai-msg.user .ai-md a { color: #fff; }
 .ai-msg.user .ai-md code, .ai-msg.user .ai-md pre { background: oklch(1 0 0 / 0.18); border-color: transparent; color: #fff; }
 .ai-tool {
   display: inline-flex; align-items: center; gap: 5px; margin: 3px 6px 3px 0;

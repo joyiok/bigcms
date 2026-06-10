@@ -1,5 +1,6 @@
 /** AI 助手接口:SSE 流式聊天(由 Pi SDK 驱动) */
 import { Router } from 'express';
+import { calculateContextTokens, getLastAssistantUsage } from '@earendil-works/pi-coding-agent';
 import { requireAuth, requireRole } from '../auth.js';
 import { getAssistantEntry, resetAssistantSession } from '../assistant/manager.js';
 
@@ -91,8 +92,9 @@ assistantRouter.post('/chat', async (req, res) => {
   }
 
   let session;
+  let model;
   try {
-    ({ session } = await getAssistantEntry(req.user!));
+    ({ session, model } = await getAssistantEntry(req.user!));
   } catch (err) {
     res.status(503).json({ error: err instanceof Error ? err.message : String(err) });
     return;
@@ -113,6 +115,9 @@ assistantRouter.post('/chat', async (req, res) => {
     res.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
 
+  // 心跳:长工具调用期间无输出,防止代理/浏览器掐断空闲连接
+  const heartbeat = setInterval(() => send('ping', {}), 15000);
+
   let finished = false;
   const unsubscribe = session.subscribe((event) => {
     switch (event.type) {
@@ -126,6 +131,13 @@ assistantRouter.post('/chat', async (req, res) => {
         break;
       case 'tool_execution_end':
         send('tool_end', { name: event.toolName, isError: event.isError });
+        break;
+      // 上下文接近窗口上限时 SDK 自动压缩(总结旧对话、保留近期),把过程透出给前端
+      case 'compaction_start':
+        send('compact_start', { reason: event.reason });
+        break;
+      case 'compaction_end':
+        send('compact_end', { aborted: event.aborted, error: event.errorMessage || '' });
         break;
     }
   });
@@ -150,12 +162,24 @@ assistantRouter.post('/chat', async (req, res) => {
         cost += m.usage.cost?.total ?? 0;
       }
     }
-    send('done', tokens ? { tokens, cost } : {});
+    // 上下文水位:当前会话占模型窗口的比例,供前端展示
+    let context = 0;
+    try {
+      const usage = getLastAssistantUsage(session.sessionManager.getEntries());
+      if (usage) context = calculateContextTokens(usage);
+    } catch {
+      /* 估算失败不影响回复 */
+    }
+    send('done', {
+      ...(tokens ? { tokens, cost } : {}),
+      ...(context && model.contextWindow ? { context, window: model.contextWindow } : {}),
+    });
   } catch (err) {
     send('error', { message: err instanceof Error ? err.message : String(err) });
     send('done', {});
   } finally {
     finished = true;
+    clearInterval(heartbeat);
     unsubscribe();
     res.end();
   }
