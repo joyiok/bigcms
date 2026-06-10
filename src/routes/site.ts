@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { articleSearchCondition, db } from '../db.js';
 import { renderMarkdown } from '../markdown.js';
-import { homeValueItems, siteCopy, siteHref, sitePageTitle } from '../site-copy.js';
+import { homeValueItems, parseValueItem, siteCopy, siteHref, sitePageTitle } from '../site-copy.js';
 
 export const siteRouter = Router();
 
@@ -63,7 +63,10 @@ function renderProductSection(settings: Record<string, string>, products: Articl
   const more = siteCopy(settings, 'home_products_more_link');
   return `<section class="band-soft home-products">
   <div class="section">
-    <h2 class="section-title">${esc(title)}</h2>
+    <div class="section-head">
+      <h2 class="section-title">${esc(title)}</h2>
+      <a class="section-link" href="/products">${esc(more)}</a>
+    </div>
     <div class="product-spread">
       <a class="product-featured" href="/news/${esc(featured.slug)}">
         <div class="product-featured-media">${cover(featured, 320)}</div>
@@ -89,7 +92,6 @@ function renderProductSection(settings: Record<string, string>, products: Articl
           .join('')}
       </div>` : ''}
     </div>
-    <a class="more-link" href="/products">${esc(more)}</a>
   </div>
 </section>`;
 }
@@ -190,12 +192,15 @@ ${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : '
 <body>
 <header class="site-header">
   <a class="wordmark" href="/">${esc(siteName)}</a>
-  <nav class="site-nav">
+  <nav class="site-nav" aria-label="主导航">
     <a href="/" ${active === 'home' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_home'))}</a>
     <a href="/news" ${active === 'news' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_news'))}</a>
     <a href="/products" ${active === 'products' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_products'))}</a>
     <a href="/contact" ${active === 'contact' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_contact'))}</a>
   </nav>
+  <div class="header-actions">
+    <a class="btn-header" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
+  </div>
 </header>
 <main>${body}</main>
 <footer class="site-footer">
@@ -243,20 +248,41 @@ siteRouter.get('/', (_req, res) => {
 
   const [featured, ...rest] = latest;
   const values = homeValueItems(settings);
+  const siteName = siteCopy(settings, 'site_name');
+  const heroTitle = siteCopy(settings, 'hero_title').trim();
+  const heroHeadline = heroTitle || siteName;
+  const showHeroBrand = Boolean(heroTitle);
   const secondaryCta = siteCopy(settings, 'hero_secondary_cta').trim() || siteCopy(settings, 'nav_contact');
   const secondaryHref = siteHref(settings, 'hero_secondary_href', '/contact');
   const aboutTitle = siteCopy(settings, 'home_about_title').trim();
   const aboutText = siteCopy(settings, 'home_about_text').trim();
   const showCategories = categories.length >= 2;
 
+  const capabilityBand = values.length
+    ? `<section class="capability-band" aria-label="核心能力">
+  <div class="capability-inner">
+    ${values
+      .map((v) => {
+        const { title, desc } = parseValueItem(v);
+        return `<article class="capability-item">
+      <h3>${esc(title)}</h3>
+      ${desc ? `<p>${esc(desc)}</p>` : ''}
+    </article>`;
+      })
+      .join('')}
+  </div>
+</section>`
+    : '';
+
   const body = `
 <section class="hero">
+  <div class="hero-bg" aria-hidden="true"></div>
   <canvas id="scope" aria-hidden="true"></canvas>
   <div class="hero-inner">
     <div class="hero-copy">
-      <h1>${esc(siteCopy(settings, 'site_name'))}</h1>
+      ${showHeroBrand ? `<p class="hero-brand">${esc(siteName)}</p>` : ''}
+      <h1>${esc(heroHeadline)}</h1>
       <p class="hero-sub">${esc(siteCopy(settings, 'site_description'))}</p>
-      ${values.length ? `<ul class="hero-values">${values.map((v) => `<li>${esc(v)}</li>`).join('')}</ul>` : ''}
       <div class="hero-actions">
         <a class="btn-primary" href="/news">${esc(siteCopy(settings, 'hero_cta'))}</a>
         <a class="btn-secondary" href="${esc(secondaryHref)}">${esc(secondaryCta)}</a>
@@ -265,11 +291,15 @@ siteRouter.get('/', (_req, res) => {
     ${renderHeroAside(settings, notices)}
   </div>
 </section>
+${capabilityBand}
 
 ${featured ? `
 <section class="section home-insights">
-  <h2 class="section-title">${esc(siteCopy(settings, 'home_news_title'))}</h2>
-  <div class="news-spread">
+  <div class="section-head">
+    <h2 class="section-title">${esc(siteCopy(settings, 'home_news_title'))}</h2>
+    <a class="section-link" href="/news">${esc(siteCopy(settings, 'home_more_link'))}</a>
+  </div>
+  <div class="news-spread${rest.length ? '' : ' news-spread-single'}">
     <a class="featured" href="/news/${esc(featured.slug)}">
       <div class="featured-media">${cover(featured, 320)}</div>
       <div class="featured-text">
@@ -289,7 +319,6 @@ ${featured ? `
       </a>`
         )
         .join('')}
-      <a class="more-link" href="/news">${esc(siteCopy(settings, 'home_more_link'))}</a>
     </div>
   </div>
 </section>` : ''}
@@ -298,17 +327,21 @@ ${renderProductSection(settings, products)}
 
 ${aboutTitle || aboutText ? `
 <section class="home-about">
-  <div class="section home-about-inner">
-    ${aboutTitle ? `<h2>${esc(aboutTitle)}</h2>` : ''}
-    ${aboutText ? `<p class="home-about-text">${esc(aboutText)}</p>` : ''}
-    <a class="btn-primary" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
+  <div class="section home-about-split">
+    <div class="home-about-lead">
+      ${aboutTitle ? `<h2>${esc(aboutTitle)}</h2>` : ''}
+      <a class="btn-primary" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
+    </div>
+    ${aboutText ? `<div class="home-about-body"><p>${esc(aboutText)}</p></div>` : ''}
   </div>
 </section>` : ''}
 
 ${showCategories ? `
 <section class="band-soft home-categories">
   <div class="section">
-    <h2 class="section-title">${esc(siteCopy(settings, 'home_categories_title'))}</h2>
+    <div class="section-head">
+      <h2 class="section-title">${esc(siteCopy(settings, 'home_categories_title'))}</h2>
+    </div>
     <div class="cat-list">
       ${categories
         .map(
@@ -325,9 +358,11 @@ ${showCategories ? `
 </section>` : ''}
 
 <section class="cta-band">
-  <h2>${esc(siteCopy(settings, 'cta_title'))}</h2>
-  <p>${esc(siteCopy(settings, 'cta_text'))}</p>
-  <a class="btn-light" href="${esc(siteHref(settings, 'cta_href', '/news'))}">${esc(siteCopy(settings, 'cta_button'))}</a>
+  <div class="cta-band-inner">
+    <h2>${esc(siteCopy(settings, 'cta_title'))}</h2>
+    <p>${esc(siteCopy(settings, 'cta_text'))}</p>
+    <a class="btn-light" href="${esc(siteHref(settings, 'cta_href', '/news'))}">${esc(siteCopy(settings, 'cta_button'))}</a>
+  </div>
 </section>
 <script src="/scope.js" defer></script>`;
 

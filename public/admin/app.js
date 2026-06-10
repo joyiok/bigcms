@@ -657,6 +657,7 @@ pages.settings = async () => {
       title: '首页 Hero',
       desc: '首屏文案、按钮与主图',
       fields: [
+        ['hero_title', '主标题', { placeholder: '留空则用站点名称;填写后页眉仍显示站点名称' }],
         ['hero_cta', '主按钮文案'],
         ['hero_secondary_cta', '次按钮文案', { placeholder: '留空则显示「联系我们」' }],
         ['hero_secondary_href', '次按钮链接'],

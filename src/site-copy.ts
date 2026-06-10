@@ -7,6 +7,7 @@ export const SITE_COPY_DEFAULTS: Record<string, string> = {
   site_footer_credit: 'Powered by BigCMS',
   nav_home: '首页',
   nav_news: '新闻中心',
+  hero_title: '',
   hero_cta: '浏览最新动态',
   hero_secondary_cta: '',
   hero_secondary_href: '/contact',
@@ -51,6 +52,7 @@ export const SITE_COPY_LABELS: Record<string, string> = {
   site_footer_credit: '页脚署名(如 Powered by …)',
   nav_home: '导航「首页」文案',
   nav_news: '导航「新闻中心」文案',
+  hero_title: '首页主标题(留空则用站点名称;填写后页眉仍显示站点名称)',
   hero_cta: '首页主按钮文案',
   hero_secondary_cta: '首页次按钮文案(留空则用「联系我们」)',
   hero_secondary_href: '首页次按钮链接',
@@ -95,6 +97,13 @@ export function homeValueItems(settings: Record<string, string>): string[] {
   return (['home_value_1', 'home_value_2', 'home_value_3'] as const)
     .map((k) => siteCopy(settings, k).trim())
     .filter(Boolean);
+}
+
+/** 能力点文案支持「标题 · 描述」格式 */
+export function parseValueItem(raw: string): { title: string; desc: string } {
+  const sep = raw.indexOf(' · ');
+  if (sep === -1) return { title: raw, desc: '' };
+  return { title: raw.slice(0, sep).trim(), desc: raw.slice(sep + 3).trim() };
 }
 
 export function siteHref(settings: Record<string, string>, key: string, fallback: string): string {
