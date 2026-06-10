@@ -9,6 +9,7 @@ import { slugify } from '../slug.js';
 import { hashPassword } from '../password.js';
 import type { AuthUser } from '../auth.js';
 import { getSafeSettings } from '../settings.js';
+import { SITE_COPY_DEFAULTS, SITE_COPY_LABELS } from '../site-copy.js';
 
 /** 工具返回:把数据序列化为 JSON 文本交给模型 */
 function ok(data: unknown) {
@@ -599,12 +600,83 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
     })
   );
 
+  // ---- 联系人 ----
+  tools.push(
+    defineTool({
+      name: 'list_contacts',
+      label: '联系人列表',
+      description: '查询前台用户提交的联系表单记录,支持按状态(new/read/archived)和关键词筛选。',
+      parameters: Type.Object({
+        page: Type.Optional(Type.Number({ description: '页码,默认 1' })),
+        page_size: Type.Optional(Type.Number({ description: '每页条数,默认 20' })),
+        status: Type.Optional(Type.String({ description: 'new / read / archived' })),
+        q: Type.Optional(Type.String({ description: '搜索姓名/电话/邮箱/留言' })),
+      }),
+      execute: async (_id, p) => {
+        const page = Math.max(1, p.page ?? 1);
+        const pageSize = Math.min(100, Math.max(1, p.page_size ?? 20));
+        const conditions: string[] = [];
+        const params: string[] = [];
+        if (p.status && ['new', 'read', 'archived'].includes(p.status)) {
+          conditions.push('status = ?');
+          params.push(p.status);
+        }
+        if (p.q) {
+          conditions.push('(name LIKE ? OR email LIKE ? OR phone LIKE ? OR company LIKE ? OR message LIKE ?)');
+          const kw = `%${p.q.slice(0, 100)}%`;
+          params.push(kw, kw, kw, kw, kw);
+        }
+        const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+        const total = (db.prepare(`SELECT COUNT(*) AS c FROM contacts${where}`).get(...params) as { c: number }).c;
+        const items = db
+          .prepare(`SELECT id, name, email, phone, company, message, status, created_at FROM contacts${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+          .all(...params, pageSize, (page - 1) * pageSize);
+        return ok({ items, total, page, page_size: pageSize });
+      },
+    })
+  );
+
+  if (user.role !== 'viewer') {
+    tools.push(
+      defineTool({
+        name: 'update_contact',
+        label: '更新联系人',
+        description: '更新联系人记录状态(new/read/archived)。',
+        parameters: Type.Object({
+          id: Type.Number({ description: '联系人 ID(必填)' }),
+          status: Type.String({ description: 'new / read / archived(必填)' }),
+        }),
+        execute: async (_id, p) => {
+          if (!['new', 'read', 'archived'].includes(p.status)) throw new Error('状态无效');
+          const result = db.prepare(`UPDATE contacts SET status = ? WHERE id = ?`).run(p.status, p.id);
+          if (!result.changes) throw new Error('联系人记录不存在');
+          auditAi(user, 'update_contact', `contact:${p.id}`, p.status);
+          return ok(db.prepare(`SELECT id, name, email, phone, company, message, status, created_at FROM contacts WHERE id = ?`).get(p.id));
+        },
+      }),
+      defineTool({
+        name: 'delete_contact',
+        label: '删除联系人',
+        description: '删除联系人记录。删除前须向用户确认。',
+        parameters: Type.Object({
+          id: Type.Number({ description: '联系人 ID(必填)' }),
+        }),
+        execute: async (_id, p) => {
+          const result = db.prepare(`DELETE FROM contacts WHERE id = ?`).run(p.id);
+          if (!result.changes) throw new Error('联系人记录不存在');
+          auditAi(user, 'delete_contact', `contact:${p.id}`);
+          return ok({ ok: true });
+        },
+      })
+    );
+  }
+
   // ---- 站点设置 ----
   tools.push(
     defineTool({
       name: 'get_settings',
       label: '查看站点设置',
-      description: '获取站点设置(站点名称、描述、关键词、ICP 备案号等)。',
+      description: '获取站点设置,含前台官网全部文案(站点名称/wordmark、描述、导航、首页区块、页脚署名等)。',
       parameters: Type.Object({}),
       execute: async () => ok(getSafeSettings(false)),
     })
@@ -615,13 +687,15 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
       defineTool({
         name: 'update_settings',
         label: '修改站点设置',
-        description: '修改站点设置,只传需要修改的字段(仅管理员)。',
-        parameters: Type.Object({
-          site_name: Type.Optional(Type.String({ description: '站点名称' })),
-          site_description: Type.Optional(Type.String({ description: '站点描述' })),
-          site_keywords: Type.Optional(Type.String({ description: '关键词,逗号分隔' })),
-          icp_number: Type.Optional(Type.String({ description: 'ICP 备案号' })),
-        }),
+        description: '修改站点设置与前台官网文案,只传需要修改的字段(仅管理员)。',
+        parameters: Type.Object(
+          Object.fromEntries(
+            Object.keys(SITE_COPY_DEFAULTS).map((key) => [
+              key,
+              Type.Optional(Type.String({ description: SITE_COPY_LABELS[key] ?? key })),
+            ])
+          )
+        ),
         execute: async (_id, p) => {
           const upsert = db.prepare(
             `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`

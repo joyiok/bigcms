@@ -229,6 +229,39 @@ test('安全响应头:页面带 CSP/nosniff,上传文件沙箱化', async () => 
   assert.equal(file.headers.get('content-security-policy'), 'sandbox');
 });
 
+test('联系表单:前台可提交,后台可查看与管理', async () => {
+  const bad = await api('/api/public/contact', { method: 'POST', body: { name: '测试' } });
+  assert.equal(bad.status, 400);
+
+  const ok = await api('/api/public/contact', {
+    method: 'POST',
+    body: { name: '张三', phone: '13800138000', email: 'zhang@example.com', company: '示例公司', message: '想了解产品报价' },
+  });
+  assert.equal(ok.status, 201);
+  assert.equal(ok.data.ok, true);
+
+  const list = await api('/api/contacts', { token: adminToken });
+  assert.equal(list.status, 200);
+  assert.ok(list.data.items.some((c: { name: string }) => c.name === '张三'));
+
+  const id = list.data.items.find((c: { name: string }) => c.name === '张三').id;
+  const detail = await api(`/api/contacts/${id}`, { token: adminToken });
+  assert.equal(detail.status, 200);
+  assert.equal(detail.data.status, 'read');
+
+  const updated = await api(`/api/contacts/${id}`, { method: 'PUT', token: adminToken, body: { status: 'archived' } });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.status, 'archived');
+
+  const removed = await api(`/api/contacts/${id}`, { method: 'DELETE', token: adminToken });
+  assert.equal(removed.status, 200);
+});
+
+test('商品分类:种子数据包含 products 分类', async () => {
+  const cats = await api('/api/categories', { token: adminToken });
+  assert.ok(cats.data.items.some((c: { slug: string; name: string }) => c.slug === 'products' && c.name === '商品'));
+});
+
 test('公开 API 只暴露已发布内容', async () => {
   const draft = await api('/api/articles', {
     method: 'POST',

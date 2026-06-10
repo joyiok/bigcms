@@ -9,6 +9,19 @@ export const dashboardRouter = Router();
 export const auditRouter = Router();
 export const publicRouter = Router();
 
+/** 联系表单提交限速:同一 IP 15 分钟内最多 5 次 */
+const CONTACT_WINDOW_MS = 15 * 60 * 1000;
+const CONTACT_MAX_SUBMISSIONS = 5;
+const contactSubmissions = new Map<string, number[]>();
+
+function pruneContactSubmissions(ip: string): number[] {
+  const now = Date.now();
+  const list = (contactSubmissions.get(ip) ?? []).filter((t) => now - t < CONTACT_WINDOW_MS);
+  if (list.length) contactSubmissions.set(ip, list);
+  else contactSubmissions.delete(ip);
+  return list;
+}
+
 // ---- 站点设置 ----
 settingsRouter.get('/', requireAuth, (req, res) => {
   res.json(getSafeSettings(req.user?.role === 'admin'));
@@ -70,6 +83,8 @@ dashboardRouter.get('/stats', requireAuth, (_req, res) => {
     tags: count(`SELECT COUNT(*) AS c FROM tags`),
     media: count(`SELECT COUNT(*) AS c FROM media`),
     users: count(`SELECT COUNT(*) AS c FROM users`),
+    contacts: count(`SELECT COUNT(*) AS c FROM contacts`),
+    contacts_new: count(`SELECT COUNT(*) AS c FROM contacts WHERE status = 'new'`),
     total_views: (db.prepare(`SELECT COALESCE(SUM(views), 0) AS c FROM articles`).get() as { c: number }).c,
     recent_articles: db
       .prepare(`SELECT id, title, status, updated_at FROM articles ORDER BY updated_at DESC LIMIT 5`)
@@ -170,4 +185,52 @@ publicRouter.get('/articles/:slug', (req, res) => {
 publicRouter.get('/site', (_req, res) => {
   const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
   res.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+});
+
+publicRouter.post('/contact', (req, res) => {
+  const ip = String(req.ip ?? '');
+  if (pruneContactSubmissions(ip).length >= CONTACT_MAX_SUBMISSIONS) {
+    res.status(429).json({ error: '提交过于频繁,请稍后再试' });
+    return;
+  }
+
+  const body = req.body ?? {};
+  if (body.website) {
+    res.status(201).json({ ok: true });
+    return;
+  }
+
+  const name = String(body.name ?? '').trim().slice(0, 80);
+  const phone = String(body.phone ?? '').trim().slice(0, 40);
+  const email = String(body.email ?? '').trim().slice(0, 120);
+  const company = String(body.company ?? '').trim().slice(0, 120);
+  const message = String(body.message ?? '').trim().slice(0, 2000);
+
+  if (!name) {
+    res.status(400).json({ error: '请填写姓名' });
+    return;
+  }
+  if (!phone) {
+    res.status(400).json({ error: '请填写电话' });
+    return;
+  }
+  if (!message) {
+    res.status(400).json({ error: '请填写留言' });
+    return;
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: '邮箱格式无效' });
+    return;
+  }
+
+  db.prepare(`INSERT INTO contacts (name, email, phone, company, message, ip) VALUES (?, ?, ?, ?, ?, ?)`).run(
+    name,
+    email,
+    phone,
+    company,
+    message,
+    ip
+  );
+  contactSubmissions.set(ip, [...pruneContactSubmissions(ip), Date.now()]);
+  res.status(201).json({ ok: true });
 });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { articleSearchCondition, db } from '../db.js';
 import { renderMarkdown } from '../markdown.js';
+import { siteCopy, sitePageTitle } from '../site-copy.js';
 
 export const siteRouter = Router();
 
@@ -84,13 +85,13 @@ function layout(opts: {
   title: string;
   settings: Record<string, string>;
   body: string;
-  active: 'home' | 'news';
+  active: 'home' | 'news' | 'products' | 'contact';
   description?: string;
   ogImage?: string;
 }): string {
   const { title, settings, body, active } = opts;
-  const siteName = settings.site_name || 'BigCMS';
-  const description = opts.description || settings.site_description || '';
+  const siteName = siteCopy(settings, 'site_name');
+  const description = opts.description || siteCopy(settings, 'site_description');
   const categories = publishedCategories();
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -99,7 +100,7 @@ function layout(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
-<meta name="keywords" content="${esc(settings.site_keywords || '')}">
+<meta name="keywords" content="${esc(siteCopy(settings, 'site_keywords'))}">
 <meta property="og:type" content="${active === 'news' ? 'article' : 'website'}">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
@@ -110,36 +111,37 @@ ${opts.ogImage ? `<meta property="og:image" content="${esc(opts.ogImage)}">` : '
 </head>
 <body>
 <header class="site-header">
-  <a class="wordmark" href="/">BigCMS</a>
+  <a class="wordmark" href="/">${esc(siteName)}</a>
   <nav class="site-nav">
-    <a href="/" ${active === 'home' ? 'aria-current="page"' : ''}>首页</a>
-    <a href="/news" ${active === 'news' ? 'aria-current="page"' : ''}>新闻中心</a>
-    ${categories.slice(0, 3).map((c) => `<a class="nav-cat" href="/news?category=${esc(c.slug)}">${esc(c.name)}</a>`).join('')}
+    <a href="/" ${active === 'home' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_home'))}</a>
+    <a href="/news" ${active === 'news' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_news'))}</a>
+    <a href="/products" ${active === 'products' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_products'))}</a>
+    <a href="/contact" ${active === 'contact' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_contact'))}</a>
   </nav>
-  <a class="admin-link" href="/admin/">管理后台</a>
 </header>
 <main>${body}</main>
 <footer class="site-footer">
   <div class="foot-grid">
     <div class="foot-about">
-      <div class="foot-brand">BigCMS</div>
-      <p>${esc(settings.site_description || '企业内容,清晰可见。')}</p>
+      <div class="foot-brand">${esc(siteName)}</div>
+      <p>${esc(siteCopy(settings, 'site_description'))}</p>
     </div>
     <nav class="foot-col" aria-label="栏目">
-      <h3>栏目</h3>
+      <h3>${esc(siteCopy(settings, 'footer_categories_title'))}</h3>
       ${categories.map((c) => `<a href="/news?category=${esc(c.slug)}">${esc(c.name)}</a>`).join('') || '<span class="foot-dim">暂无栏目</span>'}
     </nav>
     <nav class="foot-col" aria-label="快速入口">
-      <h3>快速入口</h3>
-      <a href="/">首页</a>
-      <a href="/news">新闻中心</a>
-      <a href="/admin/">管理后台</a>
+      <h3>${esc(siteCopy(settings, 'footer_links_title'))}</h3>
+      <a href="/">${esc(siteCopy(settings, 'nav_home'))}</a>
+      <a href="/news">${esc(siteCopy(settings, 'nav_news'))}</a>
+      <a href="/products">${esc(siteCopy(settings, 'nav_products'))}</a>
+      <a href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
     </nav>
   </div>
   <div class="foot-bottom">
     <span>© ${new Date().getFullYear()} ${esc(siteName)}</span>
-    ${settings.icp_number ? `<span>${esc(settings.icp_number)}</span>` : ''}
-    <span>Powered by BigCMS</span>
+    ${siteCopy(settings, 'icp_number') ? `<span>${esc(siteCopy(settings, 'icp_number'))}</span>` : ''}
+    ${siteCopy(settings, 'site_footer_credit') ? `<span>${esc(siteCopy(settings, 'site_footer_credit'))}</span>` : ''}
   </div>
 </footer>
 </body>
@@ -160,16 +162,15 @@ siteRouter.get('/', (_req, res) => {
   <canvas id="scope" aria-hidden="true"></canvas>
   <div class="hero-inner">
     <div class="hero-copy">
-      <h1>${esc(settings.site_name || 'BigCMS')}</h1>
-      <p class="hero-sub">${esc(settings.site_description || '企业内容,清晰可见。')}</p>
+      <h1>${esc(siteCopy(settings, 'site_name'))}</h1>
+      <p class="hero-sub">${esc(siteCopy(settings, 'site_description'))}</p>
       <div class="hero-actions">
-        <a class="btn-primary" href="/news">浏览最新动态</a>
-        <a class="btn-outline" href="/admin/">进入管理后台</a>
+        <a class="btn-primary" href="/news">${esc(siteCopy(settings, 'hero_cta'))}</a>
       </div>
     </div>
     ${notices.length ? `
     <aside class="hero-panel">
-      <div class="panel-head"><span>公司要闻</span><a href="/news">更多 →</a></div>
+      <div class="panel-head"><span>${esc(siteCopy(settings, 'hero_notices_title'))}</span><a href="/news">更多 →</a></div>
       ${notices.map((a) => `
       <a class="panel-row" href="/news/${esc(a.slug)}">
         <span class="panel-date">${fmtDate(a.published_at)}</span>
@@ -181,7 +182,7 @@ siteRouter.get('/', (_req, res) => {
 
 ${featured ? `
 <section class="section">
-  <h2 class="section-title">最新动态</h2>
+  <h2 class="section-title">${esc(siteCopy(settings, 'home_news_title'))}</h2>
   <div class="news-spread">
     <a class="featured" href="/news/${esc(featured.slug)}">
       <div class="featured-media">${cover(featured, 320)}</div>
@@ -198,16 +199,16 @@ ${featured ? `
         <span class="news-title">${esc(a.title)}</span>
         <span class="news-arrow">→</span>
       </a>`).join('') || '<p class="empty">更多内容筹备中。</p>'}
-      <a class="more-link" href="/news">全部动态 →</a>
+      <a class="more-link" href="/news">${esc(siteCopy(settings, 'home_more_link'))}</a>
     </div>
   </div>
 </section>` : `
-<section class="section"><h2 class="section-title">最新动态</h2><p class="empty">内容筹备中,敬请期待。</p></section>`}
+<section class="section"><h2 class="section-title">${esc(siteCopy(settings, 'home_news_title'))}</h2><p class="empty">内容筹备中,敬请期待。</p></section>`}
 
 ${categories.length ? `
 <section class="band-soft">
   <div class="section">
-    <h2 class="section-title">栏目</h2>
+    <h2 class="section-title">${esc(siteCopy(settings, 'home_categories_title'))}</h2>
     <div class="cat-list">
       ${categories.map((c) => `
       <a class="cat-item" href="/news?category=${esc(c.slug)}">
@@ -220,13 +221,13 @@ ${categories.length ? `
 </section>` : ''}
 
 <section class="cta-band">
-  <h2>把下一条动态,交给 BigCMS 发布</h2>
-  <p>文章、栏目、媒体库、权限与审计,一套后台全部就绪。</p>
-  <a class="btn-light" href="/admin/">进入管理后台</a>
+  <h2>${esc(siteCopy(settings, 'cta_title'))}</h2>
+  <p>${esc(siteCopy(settings, 'cta_text'))}</p>
+  <a class="btn-light" href="/news">${esc(siteCopy(settings, 'cta_button'))}</a>
 </section>
 <script src="/scope.js" defer></script>`;
 
-  res.send(layout({ title: settings.site_name || 'BigCMS', settings, body, active: 'home' }));
+  res.send(layout({ title: sitePageTitle(settings), settings, body, active: 'home' }));
 });
 
 // ---- 新闻中心 ----
@@ -271,7 +272,7 @@ siteRouter.get('/news', (req, res) => {
 
   const body = `
 <section class="page-head">
-  <h1>新闻中心</h1>
+  <h1>${esc(siteCopy(settings, 'nav_news'))}</h1>
   <form class="site-search" action="/news" method="get" role="search">
     ${categorySlug ? `<input type="hidden" name="category" value="${esc(categorySlug)}">` : ''}
     <input type="search" name="q" value="${esc(q)}" placeholder="搜索新闻…" aria-label="搜索新闻">
@@ -306,7 +307,7 @@ siteRouter.get('/news', (req, res) => {
   </nav>` : ''}
 </section>`;
 
-  res.send(layout({ title: `新闻中心 · ${settings.site_name || 'BigCMS'}`, settings, body, active: 'news' }));
+  res.send(layout({ title: sitePageTitle(settings, siteCopy(settings, 'nav_news')), settings, body, active: 'news' }));
 });
 
 // ---- 文章详情 ----
@@ -319,10 +320,10 @@ siteRouter.get('/news/:slug', (req, res) => {
   if (!article) {
     res.status(404).send(
       layout({
-        title: `页面不存在 · ${settings.site_name || 'BigCMS'}`,
+        title: sitePageTitle(settings, '页面不存在'),
         settings,
         active: 'news',
-        body: `<section class="page-head"><h1>404</h1><p class="empty">这篇文章不存在,或尚未发布。</p><p style="margin-top:24px"><a class="btn-primary" href="/news">返回新闻中心</a></p></section>`,
+        body: `<section class="page-head"><h1>404</h1><p class="empty">这篇文章不存在,或尚未发布。</p><p style="margin-top:24px"><a class="btn-primary" href="/news">返回${esc(siteCopy(settings, 'nav_news'))}</a></p></section>`,
       })
     );
     return;
@@ -381,7 +382,7 @@ ${related.length ? `
 
   res.send(
     layout({
-      title: `${article.title} · ${settings.site_name || 'BigCMS'}`,
+      title: sitePageTitle(settings, article.title),
       settings,
       body,
       active: 'news',
@@ -389,6 +390,111 @@ ${related.length ? `
       ogImage: article.cover_image || undefined,
     })
   );
+});
+
+// ---- 商品 ----
+siteRouter.get('/products', (req, res) => {
+  const settings = getSettings();
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = 10;
+  const categorySlug = 'products';
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+
+  const conditions = ['c.slug = ?'];
+  const params: string[] = [categorySlug];
+  if (q) {
+    const search = articleSearchCondition(q);
+    conditions.push(search.sql);
+    params.push(...search.params);
+  }
+  const where = ` AND ${conditions.join(' AND ')}`;
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS n FROM articles a LEFT JOIN categories c ON c.id = a.category_id WHERE a.status = 'published'${where}`).get(...params) as { n: number }
+  ).n;
+  const items = db
+    .prepare(`${PUBLISHED_SQL}${where} ORDER BY a.published_at DESC LIMIT ? OFFSET ?`)
+    .all(...params, pageSize, (page - 1) * pageSize) as unknown as ArticleRow[];
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const keep = { ...(q && { q }) };
+  const pageLink = (p: number) => `/products?${new URLSearchParams({ ...keep, ...(p > 1 && { page: String(p) }) })}`.replace(/\?$/, '');
+  const pageTitle = siteCopy(settings, 'nav_products');
+
+  const body = `
+<section class="page-head">
+  <h1>${esc(pageTitle)}</h1>
+  <form class="site-search" action="/products" method="get" role="search">
+    <input type="search" name="q" value="${esc(q)}" placeholder="搜索商品…" aria-label="搜索商品">
+    <button type="submit">搜索</button>
+  </form>
+  ${q ? `<p class="filter-state">「${esc(q)}」的搜索结果,共 ${total} 篇 <a href="/products">清除筛选</a></p>` : ''}
+</section>
+<section class="section">
+  ${items.length ? `<div class="article-list">
+    ${items.map((a) => `
+    <a class="article-row" href="/news/${esc(a.slug)}">
+      <div class="row-date">
+        <span class="d">${fmtDate(a.published_at)?.slice(5) || ''}</span>
+        <span class="y">${fmtDate(a.published_at)?.slice(0, 4) || ''}</span>
+      </div>
+      <div class="row-main">
+        <h2>${esc(a.title)}</h2>
+        ${a.summary ? `<p>${esc(a.summary)}</p>` : ''}
+        <div class="meta-line">${esc(a.category_name || pageTitle)}${a.author_name ? ` · ${esc(a.author_name)}` : ''} · ${a.views} 次浏览</div>
+      </div>
+      <div class="row-thumb">${cover(a, 140)}</div>
+    </a>`).join('')}
+  </div>` : `<p class="empty">${q ? '没有找到相关内容,换个关键词试试。' : '暂无商品内容,敬请期待。'}</p>`}
+  ${totalPages > 1 ? `<nav class="pager" aria-label="分页">
+    ${page > 1 ? `<a href="${pageLink(page - 1)}">← 上一页</a>` : '<span></span>'}
+    <span class="pager-info">${page} / ${totalPages}</span>
+    ${page < totalPages ? `<a href="${pageLink(page + 1)}">下一页 →</a>` : '<span></span>'}
+  </nav>` : ''}
+</section>`;
+
+  res.send(layout({ title: sitePageTitle(settings, pageTitle), settings, body, active: 'products' }));
+});
+
+// ---- 联系我们 ----
+siteRouter.get('/contact', (_req, res) => {
+  const settings = getSettings();
+  const pageTitle = siteCopy(settings, 'contact_title');
+  const body = `
+<section class="page-head">
+  <h1>${esc(pageTitle)}</h1>
+  <p class="hero-sub">${esc(siteCopy(settings, 'contact_intro'))}</p>
+</section>
+<section class="section contact-section">
+  <form class="contact-form" id="contact-form" data-success="${esc(siteCopy(settings, 'contact_success'))}">
+    <input type="text" name="website" class="contact-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div class="contact-grid">
+      <label class="contact-field">
+        <span>${esc(siteCopy(settings, 'contact_name_label'))} *</span>
+        <input type="text" name="name" required maxlength="80" autocomplete="name">
+      </label>
+      <label class="contact-field">
+        <span>${esc(siteCopy(settings, 'contact_phone_label'))} *</span>
+        <input type="tel" name="phone" required maxlength="40" autocomplete="tel">
+      </label>
+      <label class="contact-field">
+        <span>${esc(siteCopy(settings, 'contact_email_label'))}</span>
+        <input type="email" name="email" maxlength="120" autocomplete="email">
+      </label>
+      <label class="contact-field">
+        <span>${esc(siteCopy(settings, 'contact_company_label'))}</span>
+        <input type="text" name="company" maxlength="120" autocomplete="organization">
+      </label>
+    </div>
+    <label class="contact-field">
+      <span>${esc(siteCopy(settings, 'contact_message_label'))} *</span>
+      <textarea name="message" required maxlength="2000" rows="6"></textarea>
+    </label>
+    <p id="contact-msg" class="contact-msg" hidden></p>
+    <button type="submit" class="btn-primary">${esc(siteCopy(settings, 'contact_submit'))}</button>
+  </form>
+</section>
+<script src="/contact.js" defer></script>`;
+
+  res.send(layout({ title: sitePageTitle(settings, pageTitle), settings, body, active: 'contact' }));
 });
 
 // ---- RSS 订阅 ----
@@ -401,9 +507,9 @@ siteRouter.get('/feed.xml', (req, res) => {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
-  <title>${esc(settings.site_name || 'BigCMS')}</title>
+  <title>${esc(siteCopy(settings, 'site_name'))}</title>
   <link>${base}/</link>
-  <description>${esc(settings.site_description || '')}</description>
+  <description>${esc(siteCopy(settings, 'site_description'))}</description>
   <language>zh-CN</language>
   ${items
     .map(
@@ -431,6 +537,8 @@ siteRouter.get('/sitemap.xml', (req, res) => {
   const urls = [
     { loc: `${base}/`, priority: '1.0' },
     { loc: `${base}/news`, priority: '0.8' },
+    { loc: `${base}/products`, priority: '0.8' },
+    { loc: `${base}/contact`, priority: '0.6' },
     ...publishedCategories().map((c) => ({ loc: `${base}/news?category=${encodeURIComponent(c.slug)}`, priority: '0.6' })),
     ...articles.map((a) => ({ loc: `${base}/news/${encodeURIComponent(a.slug)}`, priority: '0.7', lastmod: a.updated_at.slice(0, 10) })),
   ];
@@ -456,10 +564,10 @@ siteRouter.use((req, res, next) => {
   const settings = getSettings();
   res.status(404).send(
     layout({
-      title: `页面不存在 · ${settings.site_name || 'BigCMS'}`,
+      title: sitePageTitle(settings, '页面不存在'),
       settings,
       active: 'news',
-      body: `<section class="page-head"><h1>404</h1><p class="empty">您访问的页面不存在。</p><p style="margin-top:24px"><a class="btn-primary" href="/">返回首页</a></p></section>`,
+      body: `<section class="page-head"><h1>404</h1><p class="empty">您访问的页面不存在。</p><p style="margin-top:24px"><a class="btn-primary" href="/">返回${esc(siteCopy(settings, 'nav_home'))}</a></p></section>`,
     })
   );
 });

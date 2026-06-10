@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { hashPassword } from './password.js';
+import { ensureSiteCopySettings } from './site-copy.js';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.uploadDir, { recursive: true });
@@ -105,10 +106,24 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS contacts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  email      TEXT NOT NULL DEFAULT '',
+  phone      TEXT NOT NULL DEFAULT '',
+  company    TEXT NOT NULL DEFAULT '',
+  message    TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'read', 'archived')),
+  ip         TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status);
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_revisions_article ON article_revisions(article_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
+CREATE INDEX IF NOT EXISTS idx_contacts_created ON contacts(created_at);
 `);
 
 /** 修订历史:每篇文章保留的最大版本数 */
@@ -143,6 +158,9 @@ try {
 } catch {
   /* 列已存在 */
 }
+
+ensureSiteCopySettings(db);
+ensureProductsCategory(db);
 
 // ---- 全文检索(FTS5 trigram,标题/摘要/正文;运行环境不支持时回退 LIKE) ----
 let ftsAvailable = false;
@@ -210,6 +228,7 @@ export function seed(): void {
     .prepare(`INSERT INTO categories (name, slug, description) VALUES ('公司新闻', 'company-news', '企业动态与公告')`)
     .run().lastInsertRowid as number;
   db.prepare(`INSERT INTO categories (name, slug, description) VALUES ('产品发布', 'product-release', '产品更新与发布说明')`).run();
+  ensureProductsCategory(db);
 
   const tagId = db.prepare(`INSERT INTO tags (name, slug) VALUES ('公告', 'announcement')`).run()
     .lastInsertRowid as number;
@@ -230,11 +249,16 @@ export function seed(): void {
     ).lastInsertRowid as number;
   db.prepare(`INSERT INTO article_tags (article_id, tag_id) VALUES (?, ?)`).run(articleId, tagId);
 
-  const insertSetting = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
-  insertSetting.run('site_name', 'BigCMS 企业站点');
-  insertSetting.run('site_description', '基于 TypeScript 的企业级内容管理系统');
-  insertSetting.run('site_keywords', 'CMS,企业,内容管理');
-  insertSetting.run('icp_number', '');
-
   console.log('[db] 初始数据已写入(admin/admin123, editor/editor123)');
+}
+
+/** 为既有数据库补全「商品」分类 */
+export function ensureProductsCategory(db: { prepare: (sql: string) => { get: (...args: string[]) => unknown; run: (...args: string[]) => void } }): void {
+  if (db.prepare(`SELECT 1 FROM categories WHERE slug = ?`).get('products')) return;
+  db.prepare(`INSERT INTO categories (name, slug, description, sort_order) VALUES (?, ?, ?, ?)`).run(
+    '商品',
+    'products',
+    '产品与服务介绍',
+    '10'
+  );
 }

@@ -194,6 +194,7 @@ pages.dashboard = async () => {
       ${[
         ['文章总数', s.articles_total], ['已发布', s.articles_published], ['草稿', s.articles_draft],
         ['总浏览量', s.total_views], ['分类', s.categories], ['标签', s.tags], ['媒体文件', s.media], ['用户', s.users],
+        ['联系人', s.contacts], ['新留言', s.contacts_new],
       ].map(([label, num]) => `<div class="stat-card"><div class="num">${num}</div><div class="label">${label}</div></div>`).join('')}
     </div>
     <div class="card">
@@ -606,6 +607,30 @@ pages.settings = async () => {
     ['site_description', '站点描述'],
     ['site_keywords', '关键词(逗号分隔)'],
     ['icp_number', 'ICP 备案号'],
+    ['site_footer_credit', '页脚署名'],
+    ['nav_home', '导航「首页」'],
+    ['nav_news', '导航「新闻中心」'],
+    ['hero_cta', '首页主按钮'],
+    ['hero_notices_title', '要闻侧栏标题'],
+    ['home_news_title', '「最新动态」标题'],
+    ['home_categories_title', '「栏目」标题'],
+    ['home_more_link', '「全部动态」链接'],
+    ['cta_title', '底部 CTA 标题'],
+    ['cta_text', '底部 CTA 描述'],
+    ['cta_button', '底部 CTA 按钮'],
+        ['footer_categories_title', '页脚栏目标题'],
+    ['footer_links_title', '页脚快速入口标题'],
+    ['nav_products', '导航「商品」'],
+    ['nav_contact', '导航「联系我们」'],
+    ['contact_title', '联系页标题'],
+    ['contact_intro', '联系页简介'],
+    ['contact_name_label', '表单「姓名」'],
+    ['contact_phone_label', '表单「电话」'],
+    ['contact_email_label', '表单「邮箱」'],
+    ['contact_company_label', '表单「公司」'],
+    ['contact_message_label', '表单「留言」'],
+    ['contact_submit', '联系表单提交按钮'],
+    ['contact_success', '联系表单成功提示'],
   ];
   const AI_PROVIDERS = [
     ['', '自动(环境变量 / pi CLI)'],
@@ -675,6 +700,7 @@ const AI_TOOL_LABELS = {
   delete_tag: '删除标签', list_media: '查询媒体库', delete_media: '删除媒体文件', get_settings: '查看设置', update_settings: '修改设置',
   list_users: '查询用户', create_user: '新建用户', update_user: '更新用户', delete_user: '删除用户',
   list_audit_logs: '查询审计日志', list_article_revisions: '查询修订历史', restore_article_revision: '恢复修订版本',
+  list_contacts: '查询联系人', update_contact: '更新联系人', delete_contact: '删除联系人',
 };
 
 const AI_SUGGESTIONS = [
@@ -852,6 +878,75 @@ pages.assistant = async () => {
 };
 
 // ---------- 审计日志 ----------
+const CONTACT_STATUS_TEXT = { new: '新留言', read: '已读', archived: '已归档' };
+
+pages.contacts = async (query = { page: 1 }) => {
+  if (typeof query === 'number') query = { page: query };
+  const params = new URLSearchParams({ page: query.page || 1 });
+  if (query.status) params.set('status', query.status);
+  if (query.q) params.set('q', query.q);
+  const data = await api(`/contacts?${params}`);
+  $('#main').innerHTML = `
+    <div class="page-header"><h2>联系人管理</h2></div>
+    <div class="toolbar">
+      <select id="f-status">
+        <option value="">全部状态</option>
+        ${Object.entries(CONTACT_STATUS_TEXT).map(([v, t]) => `<option value="${v}" ${query.status === v ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
+      <input type="search" id="f-q" placeholder="搜索姓名/电话/邮箱/留言…" value="${esc(query.q || '')}">
+      <button class="btn" id="btn-filter">筛选</button>
+    </div>
+    <table><thead><tr><th>姓名</th><th>电话</th><th>邮箱</th><th>公司</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody>
+      ${data.items.map((c) => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.phone || '-')}</td><td>${esc(c.email || '-')}</td><td>${esc(c.company || '-')}</td>
+        <td><span class="badge ${c.status === 'new' ? 'draft' : c.status === 'read' ? 'active' : 'disabled'}">${CONTACT_STATUS_TEXT[c.status] || c.status}</span></td>
+        <td>${fmtDate(c.created_at)}</td>
+        <td><button class="btn small" data-view="${c.id}">查看</button>${canEdit() ? ` <button class="btn small danger" data-del="${c.id}">删除</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">暂无联系人</td></tr>'}
+    </tbody></table>
+    <div id="pager"></div>`;
+
+  const show = async (id) => {
+    const c = await api(`/contacts/${id}`);
+    const mask = openModal(`
+      <h3>联系人:${esc(c.name)}</h3>
+      <div class="form-grid">
+        <div class="form-row"><label>电话</label><div>${esc(c.phone || '-')}</div></div>
+        <div class="form-row"><label>邮箱</label><div>${esc(c.email || '-')}</div></div>
+        <div class="form-row"><label>公司</label><div>${esc(c.company || '-')}</div></div>
+        <div class="form-row"><label>提交时间</label><div>${fmtDate(c.created_at)}</div></div>
+        <div class="form-row"><label>IP</label><div class="muted">${esc(c.ip || '-')}</div></div>
+        <div class="form-row"><label>留言</label><div style="white-space:pre-wrap">${esc(c.message)}</div></div>
+        ${canEdit() ? `<div class="form-row"><label>状态</label>
+          <select id="contact-status">
+            ${Object.entries(CONTACT_STATUS_TEXT).map(([v, t]) => `<option value="${v}" ${c.status === v ? 'selected' : ''}>${t}</option>`).join('')}
+          </select></div>` : ''}
+        <div class="form-actions">
+          <button type="button" class="btn" data-act="close">关闭</button>
+          ${canEdit() ? '<button type="button" class="btn primary" data-act="save">保存状态</button>' : ''}
+        </div>
+      </div>`);
+    mask.querySelector('[data-act=close]').onclick = () => mask.remove();
+    mask.querySelector('[data-act=save]')?.addEventListener('click', async () => {
+      try {
+        await api(`/contacts/${id}`, { method: 'PUT', body: { status: mask.querySelector('#contact-status').value } });
+        toast('已保存'); mask.remove(); pages.contacts(query);
+      } catch (err) { toast(err.message, true); }
+    });
+  };
+
+  const filter = () => pages.contacts({ page: 1, status: $('#f-status').value, q: $('#f-q').value.trim() });
+  $('#btn-filter').onclick = filter;
+  $('#f-q').onkeydown = (e) => { if (e.key === 'Enter') filter(); };
+  document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => show(Number(b.dataset.view))));
+  document.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    if (!(await confirmDialog('确定删除该联系人记录吗?'))) return;
+    try { await api(`/contacts/${b.dataset.del}`, { method: 'DELETE' }); toast('已删除'); pages.contacts(query); }
+    catch (err) { toast(err.message, true); }
+  }));
+  $('#pager').appendChild(pagination(data.total, data.page, data.page_size, (p) => pages.contacts({ ...query, page: p })));
+};
+
 pages.audit = async (query = { page: 1 }) => {
   if (typeof query === 'number') query = { page: query };
   const params = new URLSearchParams({ page: query.page || 1 });

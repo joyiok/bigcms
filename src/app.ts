@@ -8,6 +8,7 @@ import { articlesRouter } from './routes/articles.js';
 import { categoriesRouter, tagsRouter } from './routes/taxonomy.js';
 import { mediaRouter } from './routes/media.js';
 import { auditRouter, dashboardRouter, publicRouter, settingsRouter } from './routes/misc.js';
+import { contactsRouter } from './routes/contacts.js';
 import { assistantRouter } from './routes/assistant.js';
 import { siteRouter } from './routes/site.js';
 
@@ -38,6 +39,7 @@ export function createApp(): express.Express {
   app.use('/api/settings', settingsRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/audit-logs', auditRouter);
+  app.use('/api/contacts', contactsRouter);
   app.use('/api/assistant', assistantRouter);
   app.use('/api/public', publicRouter);
 
