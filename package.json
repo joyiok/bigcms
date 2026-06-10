@@ -1,0 +1,30 @@
+{
+  "name": "bigcms",
+  "version": "1.0.0",
+  "description": "企业级内容管理系统 (Enterprise CMS) - TypeScript + Express + SQLite",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.79.1",
+    "@earendil-works/pi-coding-agent": "^0.79.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "marked": "^18.0.5",
+    "multer": "^2.0.1",
+    "typebox": "^1.1.38"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^25.0.0",
+    "puppeteer-core": "^25.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

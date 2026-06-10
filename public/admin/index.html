@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BigCMS 管理后台</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <!-- 登录页 -->
+  <div id="login-view" class="login-wrap hidden">
+    <form class="login-card" id="login-form">
+      <div class="login-brand">BigCMS</div>
+      <p class="login-tagline">企业内容管理系统</p>
+      <label class="field">
+        <span>账号</span>
+        <input type="text" id="login-username" placeholder="用户名或邮箱" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn primary block">登录</button>
+      <a class="login-back" href="/">← 返回前台站点</a>
+    </form>
+  </div>
+
+  <!-- 主框架 -->
+  <div id="app-view" class="layout hidden">
+    <aside class="sidebar">
+      <a class="brand" href="/admin/">BigCMS</a>
+      <nav id="nav">
+        <a href="#/dashboard" data-route="dashboard"><svg viewBox="0 0 16 16"><path d="M2 9.5 8 3l6 6.5M4 8.5V14h8V8.5"/></svg>仪表盘</a>
+        <a href="#/assistant" data-route="assistant" data-role="editor"><svg viewBox="0 0 16 16"><path d="M8 1.5 9.3 5.2 13 6.5 9.3 7.8 8 11.5 6.7 7.8 3 6.5 6.7 5.2zM12.5 10.5l.6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6z"/></svg>AI 助手</a>
+        <a href="#/articles" data-route="articles"><svg viewBox="0 0 16 16"><path d="M3 2h10v12H3zM5.5 5h5M5.5 8h5M5.5 11h3"/></svg>文章</a>
+        <a href="#/categories" data-route="categories"><svg viewBox="0 0 16 16"><path d="M2 4h4l1.5 2H14v7H2zM2 4v2"/></svg>分类</a>
+        <a href="#/tags" data-route="tags"><svg viewBox="0 0 16 16"><path d="M8.5 2H14v5.5L7.5 14 2 8.5zM11 5h.01"/></svg>标签</a>
+        <a href="#/media" data-route="media"><svg viewBox="0 0 16 16"><path d="M2 3h12v10H2zM2 10.5 6 7l4 3.5 2-1.5 2 1.5M10.5 6h.01"/></svg>媒体库</a>
+        <a href="#/users" data-route="users" data-role="admin"><svg viewBox="0 0 16 16"><path d="M8 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 14c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>用户</a>
+        <a href="#/settings" data-route="settings" data-role="admin"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2"/><path d="M13.2 8c0-.4 0-.8-.1-1.2l1.4-1-1.5-2.6-1.6.6a5.2 5.2 0 0 0-2-1.2L9.2 1H6.8l-.2 1.6a5.2 5.2 0 0 0-2 1.2L3 3.2 1.5 5.8l1.4 1c-.1.4-.1.8 0 1.2v1.2l-1.4 1 1.5 2.6 1.6-.6a5.2 5.2 0 0 0 2 1.2l.2 1.6h2.4l.2-1.6a5.2 5.2 0 0 0 2-1.2l1.6.6 1.5-2.6-1.4-1c.1-.4.1-.8.1-1.2z"/></svg>站点设置</a>
+        <a href="#/audit" data-route="audit" data-role="admin"><svg viewBox="0 0 16 16"><path d="M8 4.5V8l2.5 1.5"/><circle cx="8" cy="8" r="6"/></svg>审计日志</a>
+      </nav>
+      <div class="sidebar-footer">
+        <a class="view-site" href="/" target="_blank">查看前台 ↗</a>
+        <div id="me-name" class="me"></div>
+        <div class="sidebar-actions">
+          <button class="btn small" id="btn-password">修改密码</button>
+          <button class="btn small danger" id="btn-logout">退出</button>
+        </div>
+      </div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast"></div>
+  <script src="/admin/app.js"></script>
+</body>
+</html>
