@@ -6,6 +6,7 @@ import {
   deleteAssistantSession,
   getAssistantEntry,
   listAssistantSessions,
+  renameAssistantSession,
   resetAssistantSession,
   switchAssistantSession,
 } from '../assistant/manager.js';
@@ -95,6 +96,16 @@ assistantRouter.post('/sessions/new', async (req, res) => {
 assistantRouter.post('/sessions/open', async (req, res) => {
   try {
     await switchAssistantSession(req.user!, { sessionId: String(req.body?.id ?? '') });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 重命名某个历史会话 */
+assistantRouter.post('/sessions/rename', async (req, res) => {
+  try {
+    await renameAssistantSession(req.user!, String(req.body?.id ?? ''), String(req.body?.name ?? ''));
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });

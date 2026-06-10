@@ -46,6 +46,8 @@ interface Tab {
   page: Page;
   lastUsed: number;
   blockResources: boolean;
+  /** 标签页归属用户:各用户的标签页相互隔离,避免并发互相干扰 */
+  owner: number;
 }
 
 const tabs = new Map<string, Tab>();
@@ -72,8 +74,9 @@ export function assertWebUrl(url: string): URL {
   return target;
 }
 
-function getTab(tabId: string): Tab {
+function getTab(tabId: string, owner: number): Tab {
   const tab = tabs.get(tabId);
+  if (tab && tab.owner !== owner) throw new Error(`标签页 ${tabId} 不存在或已关闭(可用 browser_tabs 查看,或用 browser_open 新开)`);
   if (!tab || tab.page.isClosed()) {
     tabs.delete(tabId);
     throw new Error(`标签页 ${tabId} 不存在或已关闭(可用 browser_tabs 查看,或用 browser_open 新开)`);
@@ -111,24 +114,25 @@ async function pageState(tabId: string, page: Page): Promise<PageState> {
 }
 
 /** 打开 URL:新开标签页或复用已有标签页导航 */
-export async function openTab(opts: { url: string; tabId?: string; blockResources?: boolean }): Promise<PageState> {
+export async function openTab(opts: { url: string; tabId?: string; blockResources?: boolean; owner: number }): Promise<PageState> {
   const target = assertWebUrl(opts.url);
   let id: string;
   let tab: Tab;
   if (opts.tabId) {
     id = opts.tabId;
-    tab = getTab(id);
+    tab = getTab(id, opts.owner);
     if (opts.blockResources !== undefined && opts.blockResources !== tab.blockResources) {
       tab.blockResources = opts.blockResources;
       await applyBlocking(tab.page, tab.blockResources);
     }
   } else {
-    if (tabs.size >= MAX_TABS) throw new Error(`标签页已达上限 ${MAX_TABS} 个,请先用 browser_tabs 关闭不用的`);
+    const owned = [...tabs.values()].filter((t) => t.owner === opts.owner).length;
+    if (owned >= MAX_TABS) throw new Error(`标签页已达上限 ${MAX_TABS} 个,请先用 browser_tabs 关闭不用的`);
     const browser = await getBrowser();
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(120_000);
     id = crypto.randomBytes(4).toString('hex');
-    tab = { page, lastUsed: Date.now(), blockResources: Boolean(opts.blockResources) };
+    tab = { page, lastUsed: Date.now(), blockResources: Boolean(opts.blockResources), owner: opts.owner };
     if (tab.blockResources) await applyBlocking(page, true);
     tabs.set(id, tab);
   }
@@ -145,8 +149,8 @@ export type BrowserAction =
   | { type: 'wait_for'; selector: string };
 
 /** 在标签页上按顺序执行交互动作(点击/填表单/按键/等待),返回最终页面状态 */
-export async function interact(tabId: string, actions: BrowserAction[]): Promise<PageState> {
-  const tab = getTab(tabId);
+export async function interact(owner: number, tabId: string, actions: BrowserAction[]): Promise<PageState> {
+  const tab = getTab(tabId, owner);
   const page = tab.page;
   for (const [i, a] of actions.entries()) {
     try {
@@ -183,8 +187,8 @@ export async function interact(tabId: string, actions: BrowserAction[]): Promise
 }
 
 /** 在标签页上执行自定义 JS,返回 JSON 可序列化的结果 */
-export async function evaluateScript(tabId: string, script: string): Promise<unknown> {
-  const tab = getTab(tabId);
+export async function evaluateScript(owner: number, tabId: string, script: string): Promise<unknown> {
+  const tab = getTab(tabId, owner);
   const result = await tab.page.evaluate(`(async () => { ${script} })()`);
   // 防止超大返回撑爆上下文
   const json = JSON.stringify(result ?? null);
@@ -193,9 +197,9 @@ export async function evaluateScript(tabId: string, script: string): Promise<unk
 }
 
 /** 截图(指定标签页,或一次性打开 url 截完即关) */
-export async function screenshot(opts: { tabId?: string; url?: string; fullPage?: boolean }): Promise<Buffer> {
+export async function screenshot(opts: { tabId?: string; url?: string; fullPage?: boolean; owner: number }): Promise<Buffer> {
   const run = (page: Page) => page.screenshot({ type: 'png', fullPage: Boolean(opts.fullPage) });
-  if (opts.tabId) return Buffer.from(await run(getTab(opts.tabId).page));
+  if (opts.tabId) return Buffer.from(await run(getTab(opts.tabId, opts.owner).page));
   if (!opts.url) throw new Error('需提供 tab_id 或 url');
   const target = assertWebUrl(opts.url);
   const browser = await getBrowser();
@@ -211,9 +215,9 @@ export async function screenshot(opts: { tabId?: string; url?: string; fullPage?
 }
 
 /** 导出页面为 PDF */
-export async function pagePdf(opts: { tabId?: string; url?: string }): Promise<Buffer> {
+export async function pagePdf(opts: { tabId?: string; url?: string; owner: number }): Promise<Buffer> {
   const run = (page: Page) => page.pdf({ format: 'A4', printBackground: true });
-  if (opts.tabId) return Buffer.from(await run(getTab(opts.tabId).page));
+  if (opts.tabId) return Buffer.from(await run(getTab(opts.tabId, opts.owner).page));
   if (!opts.url) throw new Error('需提供 tab_id 或 url');
   const target = assertWebUrl(opts.url);
   const browser = await getBrowser();
@@ -227,9 +231,10 @@ export async function pagePdf(opts: { tabId?: string; url?: string }): Promise<B
   }
 }
 
-export async function listTabs(): Promise<{ tab_id: string; title: string; url: string }[]> {
+export async function listTabs(owner: number): Promise<{ tab_id: string; title: string; url: string }[]> {
   const out: { tab_id: string; title: string; url: string }[] = [];
   for (const [id, tab] of tabs) {
+    if (tab.owner !== owner) continue;
     if (tab.page.isClosed()) {
       tabs.delete(id);
       continue;
@@ -239,8 +244,8 @@ export async function listTabs(): Promise<{ tab_id: string; title: string; url: 
   return out;
 }
 
-export async function closeTab(tabId: string): Promise<void> {
-  const tab = getTab(tabId);
+export async function closeTab(owner: number, tabId: string): Promise<void> {
+  const tab = getTab(tabId, owner);
   tabs.delete(tabId);
   await tab.page.close().catch(() => {});
 }
@@ -258,18 +263,18 @@ export interface CookieInput {
 /** Cookie 管理:get 读取当前标签页站点的 cookie;set 写入;clear 清空整个浏览器档案的 cookie */
 export async function manageCookies(
   action: 'get' | 'set' | 'clear',
-  opts: { tabId?: string; cookies?: CookieInput[] } = {}
+  opts: { tabId?: string; cookies?: CookieInput[]; owner: number }
 ): Promise<unknown> {
   const browser = await getBrowser();
   if (action === 'get') {
     if (!opts.tabId) throw new Error('get 需提供 tab_id');
-    const cookies = await getTab(opts.tabId).page.cookies();
+    const cookies = await getTab(opts.tabId, opts.owner).page.cookies();
     return cookies.map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, expires: c.expires }));
   }
   if (action === 'set') {
     if (!opts.cookies?.length) throw new Error('set 需提供 cookies 数组');
     if (opts.tabId) {
-      await getTab(opts.tabId).page.setCookie(...(opts.cookies as CookieParam[]));
+      await getTab(opts.tabId, opts.owner).page.setCookie(...(opts.cookies as CookieParam[]));
     } else {
       for (const c of opts.cookies) {
         if (!c.domain) throw new Error('不带 tab_id 的 set 需为每个 cookie 提供 domain');

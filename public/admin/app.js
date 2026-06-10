@@ -992,9 +992,17 @@ pages.assistant = async () => {
             <div class="ai-history-preview">${esc(s.preview)}</div>
             <div class="muted small">${new Date(s.modified).toLocaleString()} · ${s.messageCount} 条${s.current ? ' · 当前' : ''}</div>
           </div>
+          <button class="btn small" data-rename="${esc(s.id)}">重命名</button>
           <button class="btn small danger" data-del="${esc(s.id)}">删除</button>
         </div>`).join('')
       : '<p class="muted small" style="margin:8px">暂无历史对话</p>';
+    historyPanel.querySelectorAll('[data-rename]').forEach((b) => (b.onclick = async (e) => {
+      e.stopPropagation();
+      const name = prompt('会话名称:');
+      if (!name || !name.trim()) return;
+      await api('/assistant/sessions/rename', { method: 'POST', body: { id: b.dataset.rename, name: name.trim() } });
+      renderHistory();
+    }));
     historyPanel.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async (e) => {
       e.stopPropagation();
       if (aiBusy) { toast('AI 正在回复,请稍候', true); return; }
@@ -1093,6 +1101,14 @@ pages.assistant = async () => {
       if (parts.length === 0) aiRenderParts(bubble, [{ type: 'text', text: '(无回复)' }]);
       else aiRenderParts(bubble, parts);
     } catch (err) {
+      // 流式中途断线(锁屏/网络抖动):稍候后重载页面,从落盘历史恢复已生成的部分
+      if (!streamDone && parts.length) {
+        aiRenderParts(bubble, [...parts, { type: 'text', text: '⚠️ 连接中断,正在从历史恢复…' }]);
+        await new Promise((r) => setTimeout(r, 1500));
+        aiBusy = false;
+        pages.assistant();
+        return;
+      }
       aiRenderParts(bubble, [...parts, { type: 'text', text: `⚠️ ${err.message}` }]);
     } finally {
       aiBusy = false;

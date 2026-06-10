@@ -179,9 +179,27 @@ interface Entry {
   model: AssistantModelInfo;
   /** 会话创建日(系统提示里写死了「今天是 X」,跨天后需用新提示重建) */
   day: string;
+  /** 最近一次被访问的时间,空闲超时后释放内存(对话已落盘,下次访问自动恢复) */
+  lastUsed: number;
 }
 
 const sessions = new Map<number, Promise<Entry>>();
+
+const ENTRY_IDLE_MS = 30 * 60 * 1000;
+
+// 空闲会话定时释放:多用户场景下不让每个人的 agent 会话永久占内存
+setInterval(() => {
+  for (const [userId, pending] of sessions) {
+    pending
+      .then((entry) => {
+        if (sessions.get(userId) !== pending) return;
+        if (entry.session.isStreaming || Date.now() - entry.lastUsed < ENTRY_IDLE_MS) return;
+        sessions.delete(userId);
+        entry.session.dispose();
+      })
+      .catch(() => sessions.delete(userId));
+  }
+}, 60_000).unref();
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -245,6 +263,7 @@ async function createEntry(user: AuthUser, open?: OpenOptions): Promise<Entry> {
       contextWindow: model.contextWindow ?? 0,
     },
     day: todayStr(),
+    lastUsed: Date.now(),
   };
 }
 
@@ -258,6 +277,7 @@ export async function getAssistantEntry(user: AuthUser): Promise<Entry> {
   if (pending) {
     try {
       const entry = await pending;
+      entry.lastUsed = Date.now();
       // 正在生成时不重建,避免打断进行中的回复
       if (entry.day === todayStr() || entry.session.isStreaming) return entry;
       sessions.delete(user.id);
@@ -317,7 +337,7 @@ export async function listAssistantSessions(user: AuthUser): Promise<AssistantSe
     .sort((a, b) => b.modified.getTime() - a.modified.getTime())
     .map((s) => ({
       id: s.id,
-      preview: (s.firstMessage || '(新对话)').slice(0, 60),
+      preview: (s.name || s.firstMessage || '(新对话)').slice(0, 60),
       messageCount: s.messageCount,
       modified: s.modified.toISOString(),
       current: s.id === currentId,
@@ -351,6 +371,28 @@ export async function switchAssistantSession(user: AuthUser, opts: { fresh?: boo
   fresh.catch(() => sessions.delete(user.id));
   sessions.set(user.id, fresh);
   return fresh;
+}
+
+/** 重命名会话(写入会话文件,列表里代替首条消息显示) */
+export async function renameAssistantSession(user: AuthUser, sessionId: string, name: string): Promise<void> {
+  const trimmed = name.trim().slice(0, 60);
+  if (!trimmed) throw new Error('名称不能为空');
+  const pending = sessions.get(user.id);
+  if (pending) {
+    try {
+      const entry = await pending;
+      if (entry.session.sessionManager.getSessionId() === sessionId) {
+        entry.session.sessionManager.appendSessionInfo(trimmed);
+        return;
+      }
+    } catch {
+      /* 当前会话创建失败,走文件路径 */
+    }
+  }
+  const list = await SessionManager.list(AGENT_DIR, userSessionDir(user.id));
+  const target = list.find((s) => s.id === sessionId);
+  if (!target) throw new Error('会话不存在');
+  SessionManager.open(target.path).appendSessionInfo(trimmed);
 }
 
 /** 删除单个会话文件;若删的是当前会话,则下次访问自动续用最近的其他会话 */

@@ -1066,7 +1066,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           block_resources: Type.Optional(Type.Boolean({ description: '屏蔽图片/媒体/字体,默认 false' })),
         }),
         execute: async (_id, p) => {
-          const state = await headlessBrowser.openTab({ url: p.url, tabId: p.tab_id, blockResources: p.block_resources });
+          const state = await headlessBrowser.openTab({ url: p.url, tabId: p.tab_id, blockResources: p.block_resources, owner: user.id });
           auditAi(user, 'browser_open', `tab:${state.tab_id}`, p.url.slice(0, 200));
           return ok(state);
         },
@@ -1091,7 +1091,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           ),
         }),
         execute: async (_id, p) => {
-          const state = await headlessBrowser.interact(p.tab_id, p.actions as headlessBrowser.BrowserAction[]);
+          const state = await headlessBrowser.interact(user.id, p.tab_id, p.actions as headlessBrowser.BrowserAction[]);
           auditAi(user, 'browser_interact', `tab:${p.tab_id}`, p.actions.map((a: { type: string }) => a.type).join(','));
           return ok(state);
         },
@@ -1106,7 +1106,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           script: Type.String({ description: 'JS 脚本体(函数内部代码,用 return 返回结果)' }),
         }),
         execute: async (_id, p) => {
-          const result = await headlessBrowser.evaluateScript(p.tab_id, p.script);
+          const result = await headlessBrowser.evaluateScript(user.id, p.tab_id, p.script);
           auditAi(user, 'browser_evaluate', `tab:${p.tab_id}`, p.script.slice(0, 200));
           return ok({ result });
         },
@@ -1123,7 +1123,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           name: Type.Optional(Type.String({ description: '存入媒体库的文件名(不含扩展名)' })),
         }),
         execute: async (_id, p) => {
-          const buf = await headlessBrowser.screenshot({ tabId: p.tab_id, url: p.url, fullPage: p.full_page });
+          const buf = await headlessBrowser.screenshot({ tabId: p.tab_id, url: p.url, fullPage: p.full_page, owner: user.id });
           const media = await saveBufferToMedia(buf, `${p.name || '网页截图'}.png`, 'image/png', user.id);
           auditAi(user, 'browser_screenshot', `media:${media.id}`, (p.url || p.tab_id || '').slice(0, 200));
           return ok(media);
@@ -1139,7 +1139,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
           name: Type.Optional(Type.String({ description: '存入媒体库的文件名(不含扩展名)' })),
         }),
         execute: async (_id, p) => {
-          const buf = await headlessBrowser.pagePdf({ tabId: p.tab_id, url: p.url });
+          const buf = await headlessBrowser.pagePdf({ tabId: p.tab_id, url: p.url, owner: user.id });
           const media = await saveBufferToMedia(buf, `${p.name || '网页导出'}.pdf`, 'application/pdf', user.id);
           auditAi(user, 'browser_pdf', `media:${media.id}`, (p.url || p.tab_id || '').slice(0, 200));
           return ok(media);
@@ -1156,11 +1156,11 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         execute: async (_id, p) => {
           if (p.action === 'close') {
             if (!p.tab_id) throw new Error('close 需提供 tab_id');
-            await headlessBrowser.closeTab(p.tab_id);
+            await headlessBrowser.closeTab(user.id, p.tab_id);
             auditAi(user, 'browser_tabs', `tab:${p.tab_id}`, 'close');
             return ok({ ok: true });
           }
-          return ok({ tabs: await headlessBrowser.listTabs() });
+          return ok({ tabs: await headlessBrowser.listTabs(user.id) });
         },
       }),
       defineTool({
@@ -1189,7 +1189,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         execute: async (_id, p) => {
           const action = p.action as 'get' | 'set' | 'clear';
           if (!['get', 'set', 'clear'].includes(action)) throw new Error('action 须为 get / set / clear');
-          const result = await headlessBrowser.manageCookies(action, { tabId: p.tab_id, cookies: p.cookies });
+          const result = await headlessBrowser.manageCookies(action, { tabId: p.tab_id, cookies: p.cookies, owner: user.id });
           auditAi(user, 'browser_cookies', p.tab_id ? `tab:${p.tab_id}` : '', action);
           return ok(result);
         },
