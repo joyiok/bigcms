@@ -40,6 +40,11 @@ function crumbs(items: { label: string; href?: string }[]): string {
 }
 
 const PRODUCTS_CATEGORY_SLUG = 'products';
+const BRAND_LOGO = '/brand/logo.png';
+
+function brandLogo(settings: Record<string, string>): string {
+  return siteCopy(settings, 'site_logo').trim() || BRAND_LOGO;
+}
 
 function renderHeroAside(settings: Record<string, string>, notices: ArticleRow[]): string {
   if (notices.length) {
@@ -60,23 +65,39 @@ function renderHeroAside(settings: Record<string, string>, notices: ArticleRow[]
   if (heroImage) {
     return `<aside class="hero-panel hero-visual"><img src="${esc(heroImage)}" alt="" class="hero-visual-img" loading="eager"></aside>`;
   }
-  const quickTitle = siteCopy(settings, 'hero_quick_title') || siteCopy(settings, 'footer_links_title') || '快速入口';
-  const links: [string, string][] = [
-    ['/news', siteCopy(settings, 'nav_news')],
-    ['/products', siteCopy(settings, 'nav_products')],
-    ['/contact', siteCopy(settings, 'nav_contact')],
+  const logo = brandLogo(settings);
+  const siteName = siteCopy(settings, 'site_name');
+  return `<aside class="hero-panel hero-logo-panel">
+    <img src="${esc(logo)}" alt="${esc(siteName)}" class="hero-panel-logo" loading="eager">
+  </aside>`;
+}
+
+function renderBrandShowcase(): string {
+  const items = [
+    ['/brand/tshirt_mockup.png', '品牌 T 恤应用'],
+    ['/brand/notebook_mockup.png', '品牌笔记本应用'],
+    ['/brand/totebag_mockup.png', '品牌帆布袋应用'],
   ];
-  return `<aside class="hero-panel hero-quick">
-    <div class="panel-head"><span>${esc(quickTitle)}</span></div>
-    <nav class="hero-quick-links" aria-label="${esc(quickTitle)}">
-      ${links
+  return `<section class="brand-showcase" aria-label="品牌应用展示">
+  <div class="section">
+    <div class="section-head">
+      <div>
+        <p class="section-tag">Brand Applications</p>
+        <h2 class="section-title">品牌应用展示</h2>
+      </div>
+    </div>
+    <div class="brand-mockup-grid">
+      ${items
         .map(
-          ([href, label]) =>
-            `<a class="hero-quick-link" href="${esc(href)}"><span>${esc(label)}</span><span class="hero-quick-arrow" aria-hidden="true">→</span></a>`
+          ([src, alt]) => `
+      <figure class="brand-mockup-card">
+        <img src="${esc(src)}" alt="${esc(alt)}" loading="lazy" width="640" height="640">
+      </figure>`
         )
         .join('')}
-    </nav>
-  </aside>`;
+    </div>
+  </div>
+</section>`;
 }
 
 function renderProductSection(settings: Record<string, string>, products: ArticleRow[]): string {
@@ -126,11 +147,12 @@ function waveSvg(seed: number, height = 220): string {
       d += ` L ${x} ${y.toFixed(1)}`;
     }
     const opacity = l === 0 ? 0.55 : 0.25 - l * 0.06;
-    lines.push(`<path d="${d}" fill="none" stroke="oklch(0.5 0.08 195)" stroke-width="${l === 0 ? 2 : 1.2}" opacity="${opacity}"/>`);
+    const stroke = l === 0 ? '#0C73DF' : '#46C25F';
+    lines.push(`<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${l === 0 ? 2 : 1.2}" opacity="${opacity}"/>`);
   }
   return `<svg viewBox="0 0 800 ${height}" preserveAspectRatio="xMidYMid slice" role="img" aria-label="装饰图形">
-    <rect width="800" height="${height}" fill="oklch(0.97 0.005 195)"/>
-    <g stroke="oklch(0.92 0.005 195)" stroke-width="1">${[1, 2, 3].map((i) => `<line x1="0" y1="${(height / 4) * i}" x2="800" y2="${(height / 4) * i}"/>`).join('')}</g>
+    <rect width="800" height="${height}" fill="#0B1120"/>
+    <g stroke="rgba(12,115,223,0.08)" stroke-width="1">${[1, 2, 3].map((i) => `<line x1="0" y1="${(height / 4) * i}" x2="800" y2="${(height / 4) * i}"/>`).join('')}</g>
     ${lines.join('')}
   </svg>`;
 }
@@ -228,8 +250,10 @@ function layout(opts: {
   ]
     .filter(Boolean)
     .join('\n');
+  const logoUrl = brandLogo(settings);
+  const wordmarkLogo = `<img src="${esc(logoUrl)}" alt="" class="wordmark-logo" width="36" height="36">`;
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -239,10 +263,11 @@ ${headExtra}
 <link rel="alternate" type="application/rss+xml" title="${esc(siteName)}" href="${esc(absoluteUrl(baseUrl, '/feed.xml'))}">
 <link rel="sitemap" type="application/xml" title="Sitemap" href="${esc(absoluteUrl(baseUrl, '/sitemap.xml'))}">
 <link rel="stylesheet" href="/site.css">
+<link rel="icon" href="${esc(logoUrl)}" type="image/png">
 </head>
 <body>
 <header class="site-header">
-  <a class="wordmark" href="/">${esc(siteName)}</a>
+  <a class="wordmark" href="/">${wordmarkLogo}<span class="wordmark-text">${esc(siteName)}</span></a>
   <nav class="site-nav" aria-label="主导航">
     <a href="/" ${active === 'home' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_home'))}</a>
     <a href="/news" ${active === 'news' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_news'))}</a>
@@ -251,6 +276,10 @@ ${headExtra}
   </nav>
   <div class="header-actions">
     <a class="btn-header" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
+      <svg class="icon-sun" hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+      <svg class="icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
   </div>
 </header>
 <main>${body}</main>
@@ -278,6 +307,7 @@ ${headExtra}
     ${siteCopy(settings, 'site_footer_credit') ? `<span>${esc(siteCopy(settings, 'site_footer_credit'))}</span>` : ''}
   </div>
 </footer>
+<script src="/site.js" defer></script>
 </body>
 </html>`;
 }
@@ -330,9 +360,14 @@ siteRouter.get('/', (req, res) => {
 
   const body = `
 <section class="hero">
+  <div class="hero-glow-1" aria-hidden="true"></div>
+  <div class="hero-glow-2" aria-hidden="true"></div>
   <canvas id="scope" aria-hidden="true"></canvas>
   <div class="hero-inner">
     <div class="hero-copy">
+      <div class="hero-logo-wrap">
+        <img src="${esc(brandLogo(settings))}" alt="" class="hero-mark" width="120" height="120" loading="eager">
+      </div>
       ${showHeroBrand ? `<p class="hero-brand">${esc(siteName)}</p>` : ''}
       <h1>${esc(heroHeadline)}</h1>
       <p class="hero-sub">${esc(siteCopy(settings, 'site_description'))}</p>
@@ -385,8 +420,13 @@ ${aboutTitle || aboutText ? `
       <a class="btn-primary" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
     </div>
     ${aboutText ? `<div class="home-about-body"><p>${esc(aboutText)}</p></div>` : ''}
+    <div class="home-about-visual">
+      <img src="/brand/card_front_dark.svg" alt="QIpeak 品牌名片" loading="lazy" width="1134" height="709">
+    </div>
   </div>
 </section>` : ''}
+
+${renderBrandShowcase()}
 
 ${showCategories ? `
 <section class="band-soft home-categories">

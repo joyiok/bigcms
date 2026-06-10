@@ -1,25 +1,26 @@
 /** 前台官网文案设置(默认值仅用于数据库初始化/补全,模板不硬编码) */
 export const SITE_COPY_DEFAULTS: Record<string, string> = {
-  site_name: 'BigCMS 企业站点',
-  site_description: '基于 TypeScript 的企业级内容管理系统',
-  site_keywords: 'CMS,企业,内容管理',
+  site_name: '苏州栖岭信息技术有限公司',
+  site_description: '让信息互联 · 与自然共生',
+  site_keywords: 'QIpeak,栖岭,信息技术,云计算,物联网',
   site_url: '',
-  site_logo: '',
+  site_logo: '/brand/logo.png',
   icp_number: '',
   site_footer_credit: 'Powered by BigCMS',
   nav_home: '首页',
   nav_news: '新闻中心',
   hero_title: '',
   hero_cta: '浏览最新动态',
-  hero_secondary_cta: '',
+  hero_secondary_cta: '联系我们',
   hero_secondary_href: '/contact',
   hero_quick_title: '快速入口',
   hero_image: '',
-  home_value_1: '自托管部署 · 数据保存在企业自己的服务器,不依赖第三方云服务',
-  home_value_2: '完整审计追踪 · 每一次发布、修改与登录都有可追溯的操作记录',
-  home_value_3: '一分钟发布 · 从草稿到上线只需一次审阅,内容团队即开即用',
-  home_about_title: '',
-  home_about_text: '',
+  home_value_1: '栖岭峰顶 · 追求行业顶尖技术与卓越质量的高度',
+  home_value_2: '信息互联 · 将零散的信息节点高效率连接成有机整体',
+  home_value_3: '与自然共生 · 以绿色计算与数据洞察助力生态和谐共融',
+  home_about_title: '关于栖岭',
+  home_about_text:
+    '苏州栖岭信息技术有限公司 (QIpeak) 致力于将先进的云计算与物联感知技术融为一体,通过绿色计算与数据洞察,辅助企业与社会环境达成和谐共融的生态闭环。',
   hero_notices_title: '公司要闻',
   home_news_title: '前沿洞察',
   home_products_title: '产品',
@@ -134,4 +135,13 @@ export function ensureSiteCopySettings(db: { prepare: (sql: string) => { get: (k
   for (const key of ['home_value_1', 'home_value_2', 'home_value_3'] as const) {
     db.prepare(`UPDATE settings SET value = ? WHERE key = ? AND value = ''`).run(SITE_COPY_DEFAULTS[key], key);
   }
+  db.prepare(`UPDATE settings SET value = ? WHERE key = 'site_logo' AND (value = '' OR value IS NULL)`).run(
+    SITE_COPY_DEFAULTS.site_logo
+  );
+  db.prepare(`UPDATE settings SET value = ? WHERE key = 'home_about_title' AND value = ''`).run(
+    SITE_COPY_DEFAULTS.home_about_title
+  );
+  db.prepare(`UPDATE settings SET value = ? WHERE key = 'home_about_text' AND value = ''`).run(
+    SITE_COPY_DEFAULTS.home_about_text
+  );
 }
