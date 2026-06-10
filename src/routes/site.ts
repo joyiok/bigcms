@@ -70,7 +70,6 @@ function renderHeroAside(settings: Record<string, string>, notices: ArticleRow[]
 
 function renderProductSection(settings: Record<string, string>, products: ArticleRow[]): string {
   if (!products.length) return '';
-  const [featured, ...rest] = products;
   const title = siteCopy(settings, 'home_products_title');
   const more = siteCopy(settings, 'home_products_more_link');
   return `<section class="band-soft home-products">
@@ -79,30 +78,20 @@ function renderProductSection(settings: Record<string, string>, products: Articl
       <h2 class="section-title">${esc(title)}</h2>
       <a class="section-link" href="/products">${esc(more)}</a>
     </div>
-    <div class="product-spread">
-      <a class="product-featured" href="/news/${esc(featured.slug)}">
-        <div class="product-featured-media">${cover(featured, 320)}</div>
-        <div class="product-featured-text">
-          <div class="meta-line">${fmtDate(featured.published_at)}</div>
-          <h3>${esc(featured.title)}</h3>
-          ${featured.summary ? `<p>${esc(featured.summary)}</p>` : ''}
+    <div class="product-grid">
+      ${products
+        .map(
+          (a) => `
+      <a class="product-card" href="/news/${esc(a.slug)}">
+        <div class="product-card-media">${cover(a, 200)}</div>
+        <div class="product-card-body">
+          <h3>${esc(a.title)}</h3>
+          ${a.summary ? `<p>${esc(a.summary)}</p>` : ''}
+          <span class="product-card-cta" aria-hidden="true">了解详情 →</span>
         </div>
-      </a>
-      ${rest.length ? `<div class="product-side">
-        ${rest
-          .map(
-            (a) => `
-        <a class="product-side-row" href="/news/${esc(a.slug)}">
-          <div class="product-side-thumb">${cover(a, 88)}</div>
-          <div class="product-side-main">
-            <span class="meta-line">${fmtDate(a.published_at)}</span>
-            <span class="product-side-title">${esc(a.title)}</span>
-          </div>
-          <span class="news-arrow" aria-hidden="true">→</span>
-        </a>`
-          )
-          .join('')}
-      </div>` : ''}
+      </a>`
+        )
+        .join('')}
     </div>
   </div>
 </section>`;
