@@ -95,14 +95,12 @@ docker run -d -p 3000:3000 \
 - 安全:agent 只能调用内置的 CMS 工具(无 shell/文件访问);删除与批量操作会先向你确认;所有写操作以 `ai:` 前缀写入审计日志
 - 体验:工具调用实时显示(悬停可看参数);回复过程中可随时点「停止」;每轮回复后显示 token 用量与成本;会话上下文带有当天日期与站点信息
 
-### Bright Data 网页检索(可选)
+### 外部数据工具(可选)
 
-在「站点设置 → Bright Data」配置后,AI 助手可使用:
+- `browse_webpage` — 服务器本地无头 Chrome/Chromium 打开 URL 并提取正文。在「站点设置 → 网页抓取」填写浏览器路径,或设环境变量 `BROWSER_EXECUTABLE`(Docker 镜像默认 `/usr/bin/chromium`)。
+- `web_search` — 在「站点设置 → Bright Data」配置 [SERP API](https://docs.brightdata.com/scraping-automation/serp-api/introduction) 后,获取 Google/Bing 等结构化搜索结果(`parsed_light` 默认返回前 10 条有机结果)。
 
-- `web_search` — 经 [SERP API](https://docs.brightdata.com/scraping-automation/serp-api/introduction) 获取 Google/Bing 等结构化搜索结果(`parsed_light` 默认返回前 10 条有机结果)
-- `browse_webpage` — 经 [Scraping Browser](https://docs.brightdata.com/scraping-automation/scraping-browser/introduction) 打开 URL 并提取渲染后的页面正文(基于 `puppeteer-core` 连接 `wss://…@brd.superproxy.io:9222`)
-
-示例:「搜一下竞品最近的新闻」/「打开这个链接总结正文」。
+示例:「打开这个链接总结正文」/「搜一下竞品最近的新闻」。
 
 ### 企查查企业搜索(可选)
 

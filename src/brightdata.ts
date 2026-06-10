@@ -1,9 +1,8 @@
-/** Bright Data SERP API + 网页抓取(本地 Chrome 或 Scraping Browser) */
+/** Bright Data SERP API + 本地无头浏览器网页抓取 */
 import fs from 'node:fs';
 import { getSettings } from './settings.js';
 
 const BRIGHTDATA_REQUEST_URL = 'https://api.brightdata.com/request';
-const BROWSER_CDP_HOST = 'brd.superproxy.io:9222';
 const LOCAL_BROWSER_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
 
 export type SerpEngine = 'google' | 'bing' | 'duckduckgo';
@@ -12,23 +11,14 @@ export type SerpDataFormat = 'parsed_light' | 'markdown' | 'json';
 export interface BrightDataConfig {
   apiKey?: string;
   serpZone?: string;
-  browserAuth?: string;
 }
 
 export function getBrightDataConfig(): BrightDataConfig {
   const s = getSettings();
-  const apiKey = s.brightdata_api_key?.trim();
-  const serpZone = s.brightdata_serp_zone?.trim();
-
-  let browserAuth: string | undefined;
-  const customerId = s.brightdata_customer_id?.trim();
-  const browserZone = s.brightdata_browser_zone?.trim();
-  const browserPassword = s.brightdata_browser_password?.trim();
-  if (customerId && browserZone && browserPassword) {
-    browserAuth = `brd-customer-${customerId}-zone-${browserZone}:${browserPassword}`;
-  }
-
-  return { apiKey, serpZone, browserAuth };
+  return {
+    apiKey: s.brightdata_api_key?.trim(),
+    serpZone: s.brightdata_serp_zone?.trim(),
+  };
 }
 
 export function isSerpConfigured(cfg: BrightDataConfig = getBrightDataConfig()): boolean {
@@ -47,16 +37,9 @@ export function isLocalBrowserConfigured(): boolean {
   return Boolean(getLocalBrowserPath());
 }
 
-export function isBrowserConfigured(cfg: BrightDataConfig = getBrightDataConfig()): boolean {
-  return isLocalBrowserConfigured() || Boolean(cfg.browserAuth);
-}
-
-function encodeAuthForWss(auth: string): string {
-  const idx = auth.indexOf(':');
-  if (idx < 0) return encodeURIComponent(auth);
-  const user = auth.slice(0, idx);
-  const pass = auth.slice(idx + 1);
-  return `${encodeURIComponent(user)}:${encodeURIComponent(pass)}`;
+/** @deprecated 使用 isLocalBrowserConfigured */
+export function isBrowserConfigured(): boolean {
+  return isLocalBrowserConfigured();
 }
 
 function buildSearchUrl(engine: SerpEngine, query: string, hl: string, gl: string, json = false): string {
@@ -86,7 +69,7 @@ export async function serpSearch(opts: SerpSearchOptions): Promise<unknown> {
   const cfg = getBrightDataConfig();
   if (!cfg.apiKey || !cfg.serpZone) {
     throw new Error(
-      'Bright Data SERP API 未配置。请在后台「站点设置 → 数据服务 → Bright Data」填写 API Key 与 SERP Zone。'
+      'Bright Data SERP API 未配置。请在后台「站点设置 → Bright Data」填写 API Key 与 SERP Zone。'
     );
   }
 
@@ -178,11 +161,15 @@ async function scrapePage(
   return { title: meta.title, url: meta.url, text };
 }
 
-async function browseWithLocalBrowser(
-  executablePath: string,
-  target: URL,
-  opts: BrowsePageOptions
-): Promise<{ title: string; url: string; text: string }> {
+/** 通过本机无头 Chrome/Chromium 渲染并抓取页面正文 */
+export async function browsePage(opts: BrowsePageOptions): Promise<{ title: string; url: string; text: string }> {
+  const target = parseBrowseUrl(opts.url);
+  const executablePath = getLocalBrowserPath();
+  if (!executablePath) {
+    throw new Error(
+      '网页抓取未配置。请在后台「站点设置 → 网页抓取」填写 Chrome/Chromium 路径,或设置环境变量 BROWSER_EXECUTABLE(Docker 镜像默认 /usr/bin/chromium)。'
+    );
+  }
   assertLocalBrowserExists(executablePath);
   const { default: puppeteer } = await import('puppeteer-core');
   const browser = await puppeteer.launch({
@@ -195,36 +182,4 @@ async function browseWithLocalBrowser(
   } finally {
     await browser.close();
   }
-}
-
-async function browseWithBrightData(
-  browserAuth: string,
-  target: URL,
-  opts: BrowsePageOptions
-): Promise<{ title: string; url: string; text: string }> {
-  const { default: puppeteer } = await import('puppeteer-core');
-  const endpoint = `wss://${encodeAuthForWss(browserAuth)}@${BROWSER_CDP_HOST}`;
-  const browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
-  try {
-    return await scrapePage(() => browser.newPage(), target, opts);
-  } finally {
-    await browser.close();
-  }
-}
-
-/**
- * 抓取网页正文:优先使用后台配置的本地 Chrome;未配置时回退 Bright Data Scraping Browser。
- */
-export async function browsePage(opts: BrowsePageOptions): Promise<{ title: string; url: string; text: string }> {
-  const target = parseBrowseUrl(opts.url);
-  const localPath = getLocalBrowserPath();
-  if (localPath) return browseWithLocalBrowser(localPath, target, opts);
-
-  const cfg = getBrightDataConfig();
-  if (!cfg.browserAuth) {
-    throw new Error(
-      '网页抓取未配置。请在后台「站点设置 → Bright Data」填写本地浏览器路径,或配置 Account ID、Browser Zone 与 Browser 密码。'
-    );
-  }
-  return browseWithBrightData(cfg.browserAuth, target, opts);
 }

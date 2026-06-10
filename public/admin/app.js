@@ -599,7 +599,7 @@ pages.users = async () => {
   }));
 };
 
-const SETTINGS_SECRET_FIELDS = ['ai_api_key', 'brightdata_api_key', 'brightdata_browser_password', 'qcc_secret_key'];
+const SETTINGS_SECRET_FIELDS = ['ai_api_key', 'brightdata_api_key', 'qcc_secret_key'];
 
 function wireSettingsSecretFields(form) {
   for (const name of SETTINGS_SECRET_FIELDS) {
@@ -780,37 +780,34 @@ pages.settings = async () => {
             <section class="card settings-group integration-card">
               <header class="settings-group-head settings-group-head-row">
                 <div>
-                  <h3>Bright Data</h3>
-                  <p class="settings-group-desc"><code>web_search</code> · <code>browse_webpage</code></p>
+                  <h3>网页抓取</h3>
+                  <p class="settings-group-desc"><code>browse_webpage</code> · 本地无头 Chrome</p>
                 </div>
-                <div class="integration-badges">
-                  <span class="badge ${s.brightdata_api_key_set === '1' ? 'active' : 'disabled'}">SERP</span>
-                  <span class="badge ${s.browser_executable_path || s.brightdata_browser_password_set === '1' ? 'active' : 'disabled'}">Browser</span>
-                </div>
+                <span class="badge ${s.browser_executable_path ? 'active' : 'disabled'}">${s.browser_executable_path ? '已配置' : '未配置'}</span>
               </header>
               <div class="form-grid">
-                <div class="form-row"><label>本地浏览器路径</label>
-                  <input name="browser_executable_path" value="${esc(s.browser_executable_path || '')}" placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" autocomplete="off">
-                  <p class="field-help"><code>browse_webpage</code> 优先使用本机无头 Chrome;留空则使用下方 Bright Data Browser。Linux 示例 <code>/usr/bin/google-chrome</code>。</p>
+                <div class="form-row"><label>浏览器路径</label>
+                  <input name="browser_executable_path" value="${esc(s.browser_executable_path || '')}" placeholder="/usr/bin/chromium" autocomplete="off">
+                  <p class="field-help">Docker 镜像默认 <code>BROWSER_EXECUTABLE=/usr/bin/chromium</code>,一般无需填写。macOS 示例 <code>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</code>。</p>
                 </div>
+              </div>
+            </section>
+            <section class="card settings-group integration-card">
+              <header class="settings-group-head settings-group-head-row">
+                <div>
+                  <h3>Bright Data</h3>
+                  <p class="settings-group-desc"><code>web_search</code> · SERP API</p>
+                </div>
+                <span class="badge ${s.brightdata_api_key_set === '1' ? 'active' : 'disabled'}">${s.brightdata_api_key_set === '1' ? '已配置' : '未配置'}</span>
+              </header>
+              <div class="form-grid">
                 <div class="form-row"><label>SERP API Key</label>
                   <input type="password" name="brightdata_api_key" autocomplete="new-password" data-secret-field="1" placeholder="${s.brightdata_api_key_set === '1' ? '已保存，留空不修改' : 'Bearer Token'}">
                 </div>
                 <div class="form-row"><label>SERP Zone</label>
                   <input name="brightdata_serp_zone" value="${esc(s.brightdata_serp_zone || '')}" placeholder="zone 名称">
                 </div>
-                <div class="form-row"><label>Account ID</label>
-                  <input name="brightdata_customer_id" value="${esc(s.brightdata_customer_id || '')}" placeholder="hl_xxxxxx">
-                </div>
-                <div class="form-row"><label>Browser Zone</label>
-                  <input name="brightdata_browser_zone" value="${esc(s.brightdata_browser_zone || '')}" placeholder="scraping_browser">
-                </div>
-                <div class="form-row"><label>Browser 密码</label>
-                  <input type="password" name="brightdata_browser_password" autocomplete="new-password" data-secret-field="1" placeholder="${s.brightdata_browser_password_set === '1' ? '已保存，留空不修改' : 'Access Details 密码'}">
-                  <p class="field-help">用户名 <code>brd-customer-&lt;ID&gt;-zone-&lt;Zone&gt;</code> 由上方字段自动拼接。</p>
-                </div>
                 ${s.brightdata_api_key_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_api_key_clear" value="1"> 清除 SERP Key</label>' : ''}
-                ${s.brightdata_browser_password_set === '1' ? '<label class="check-row"><input type="checkbox" name="brightdata_browser_password_clear" value="1"> 清除 Browser 密码</label>' : ''}
               </div>
             </section>
             <section class="card settings-group integration-card">
@@ -936,7 +933,7 @@ pages.assistant = async () => {
     ${status.ready ? '' : `<div class="card ai-offline"><strong>AI 助手未就绪</strong><p class="muted" style="margin-top:6px">${esc(status.error || '')}</p>${state.user.role === 'admin' ? '<p style="margin-top:12px"><a class="btn small" href="#/settings">配置 AI 助手</a></p>' : ''}</div>`}
     <div class="ai-chat">
       <div class="ai-messages" id="ai-messages">
-        <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网内容(写文章、发布、调设置),也能做销售运营:跟进销售线索、统计漏斗、主动开发潜在客户。</div></div></div>
+        <div class="ai-msg assistant"><div class="ai-bubble"><div class="ai-md">你好,我是 BigCMS 的 AI 助手,可以帮你管理官网内容(写文章、发布、调设置),也能做销售运营:跟进销售线索、统计漏斗、主动开发潜在客户。需要查网页时我会用服务器本地的无头浏览器打开链接。</div></div></div>
         ${status.ready ? `<div class="ai-suggestions" id="ai-suggestions">${AI_SUGGESTIONS.map((s) => `<button type="button" class="ai-chip" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
       </div>
       <form class="ai-input" id="ai-form">

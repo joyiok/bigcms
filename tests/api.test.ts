@@ -235,27 +235,23 @@ test('站点设置:Bright Data 密钥只返回已配置标记', async () => {
     token: adminToken,
     body: {
       brightdata_serp_zone: 'my_serp',
-      brightdata_customer_id: 'hl_test',
-      brightdata_browser_zone: 'browser1',
       brightdata_api_key: 'bd-secret',
-      brightdata_browser_password: 'browser-secret',
+      browser_executable_path: '/usr/bin/chromium',
     },
   });
   assert.equal(saved.status, 200);
   assert.equal(saved.data.brightdata_serp_zone, 'my_serp');
+  assert.equal(saved.data.browser_executable_path, '/usr/bin/chromium');
   assert.equal(saved.data.brightdata_api_key_set, '1');
-  assert.equal(saved.data.brightdata_browser_password_set, '1');
   assert.equal(saved.data.brightdata_api_key, undefined);
-  assert.equal(saved.data.brightdata_browser_password, undefined);
 
   const cleared = await api('/api/settings', {
     method: 'PUT',
     token: adminToken,
-    body: { brightdata_api_key_clear: '1', brightdata_browser_password_clear: '1' },
+    body: { brightdata_api_key_clear: '1' },
   });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.data.brightdata_api_key_set, '');
-  assert.equal(cleared.data.brightdata_browser_password_set, '');
 });
 
 test('站点设置:企查查 SecretKey 只返回已配置标记', async () => {

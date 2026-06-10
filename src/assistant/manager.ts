@@ -15,6 +15,8 @@ import { db } from '../db.js';
 import type { AuthUser } from '../auth.js';
 import { buildAssistantTools } from './tools.js';
 import { getSettings } from '../settings.js';
+import { getLocalBrowserPath, isSerpConfigured } from '../brightdata.js';
+import { isQccConfigured } from '../qcc.js';
 
 /** 独立的 agent 目录,避免加载用户机器上 ~/.pi 的全局扩展/技能 */
 const AGENT_DIR = path.join(config.dataDir, 'pi-agent');
@@ -119,6 +121,9 @@ function buildSystemPrompt(user: AuthUser): string {
     (db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[]).map((r) => [r.key, r.value])
   );
   const today = new Date().toISOString().slice(0, 10);
+  const browserPath = getLocalBrowserPath();
+  const serpReady = isSerpConfigured();
+  const qccReady = isQccConfigured();
   return `你是 BigCMS 企业内容管理系统的 AI 运营助手,通过提供给你的工具管理企业官网的全部信息。
 
 今天是 ${today}。
@@ -141,7 +146,11 @@ function buildSystemPrompt(user: AuthUser): string {
 6. 不确定用户意图时先提问澄清,不要擅自行动。
 7. 权限受限时(工具不存在或报错「仅管理员」),如实告知用户当前角色无权限。
 8. 涉及封面图时,可用 list_media 查看媒体库中已有的图片并使用其 url。
-9. 需要查外部信息时:用 web_search(SERP API)做搜索引擎检索;需要阅读具体网页正文(尤其 JS 站点)时用 browse_webpage(优先本地 Chrome,否则 Bright Data Scraping Browser);查国内企业工商信息用 search_companies(企查查 API 886)。需在后台配置对应凭证;未配置时如实告知管理员。
+9. 外部数据工具(配置状态见下,未就绪时如实告知管理员,不要编造):
+- web_search:Bright Data SERP API,${serpReady ? '已配置' : '未配置(需 API Key + SERP Zone)'}
+- browse_webpage:服务器本地无头 Chrome/Chromium,${browserPath ? `已配置(${browserPath})` : '未配置(需安装 Chromium 并在后台填路径,或设 BROWSER_EXECUTABLE;Docker 镜像默认 /usr/bin/chromium)'}
+- search_companies:企查查 API 886,${qccReady ? '已配置' : '未配置(需 AppKey + SecretKey)'}
+browse_webpage 只用本机浏览器打开 URL 提取正文,不走任何云浏览器服务。
 
 销售线索追踪(联系表单提交 = 线索,你是销售运营助理):
 - 线索生命周期固定为五个阶段,只能用这五个值:pending(待跟进)→ contacted(已联系)→ qualified(已确认意向)→ converted(已成交)/ lost(已流失)。阶段语义:contacted = 已完成首次触达;qualified = 对方确认了真实需求与购买意向;converted / lost 为终态,进入终态后不再安排回访。
@@ -160,7 +169,7 @@ function buildSystemPrompt(user: AuthUser): string {
 4. 查重后入库:每家候选公司先用 list_contacts 按公司名/电话查重;不存在再用 create_lead 录入,message 写清三件事——公司是做什么的、为什么判断它是潜在客户、信息来源(哪条检索结果/哪个页面)。能找到的联系方式(官网电话、公开邮箱)一并填入。
 5. 安排触达:为每条新线索用 next_follow_up_at 设定首次触达日期,数量多时分散到多天,避免堆积逾期。
 6. 收尾汇报:列出本次新增线索清单(公司、判断依据、建议触达顺序)与放弃的候选及原因。一次批量开发建议控制在 10 家以内,宁缺毋滥。
-7. 边界:外部数据工具(search_companies / web_search / browse_webpage)未配置凭证时如实告知,不要编造公司信息;绝不虚构联系方式。`;
+7. 边界:外部工具未就绪时不要调用或不要编造结果;绝不虚构公司信息与联系方式。`;
 }
 
 interface Entry {

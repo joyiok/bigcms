@@ -36,6 +36,13 @@ settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
   const del = db.prepare(`DELETE FROM settings WHERE key = ?`);
   const changed: string[] = [];
   let aiChanged = false;
+  const INTEGRATION_KEYS = new Set([
+    'browser_executable_path',
+    'brightdata_api_key',
+    'brightdata_serp_zone',
+    'qcc_app_key',
+    'qcc_secret_key',
+  ]);
 
   if (body.ai_provider !== undefined && !AI_PROVIDERS.has(String(body.ai_provider))) {
     res.status(400).json({ error: 'AI 提供商无效' });
@@ -55,7 +62,6 @@ settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
     if (
       key === 'ai_api_key_set' ||
       key === 'brightdata_api_key_set' ||
-      key === 'brightdata_browser_password_set' ||
       key === 'qcc_secret_key_set'
     )
       continue;
@@ -71,13 +77,7 @@ settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
       if (value === '1') {
         del.run('brightdata_api_key');
         changed.push('brightdata_api_key');
-      }
-      continue;
-    }
-    if (key === 'brightdata_browser_password_clear') {
-      if (value === '1') {
-        del.run('brightdata_browser_password');
-        changed.push('brightdata_browser_password');
+        aiChanged = true;
       }
       continue;
     }
@@ -85,20 +85,20 @@ settingsRouter.put('/', requireAuth, requireRole('admin'), async (req, res) => {
       if (value === '1') {
         del.run('qcc_secret_key');
         changed.push('qcc_secret_key');
+        aiChanged = true;
       }
       continue;
     }
     if (
       (key === 'ai_api_key' ||
         key === 'brightdata_api_key' ||
-        key === 'brightdata_browser_password' ||
         key === 'qcc_secret_key') &&
       value.trim() === ''
     )
       continue;
     upsert.run(key, value.trim());
     changed.push(key);
-    if (key.startsWith('ai_')) aiChanged = true;
+    if (key.startsWith('ai_') || INTEGRATION_KEYS.has(key)) aiChanged = true;
   }
 
   if (aiChanged) await resetAssistantSessions();

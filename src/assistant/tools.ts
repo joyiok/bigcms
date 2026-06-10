@@ -1012,7 +1012,7 @@ export function buildAssistantTools(user: AuthUser): ToolDefinition[] {
         name: 'browse_webpage',
         label: '浏览器抓取网页',
         description:
-          '打开 URL 并提取页面标题与正文(适合 JS 渲染站点)。优先使用后台配置的本地 Chrome;未配置时使用 Bright Data Scraping Browser。仅用于合法公开信息采集,勿抓取用户隐私或违反目标站条款。',
+          '用服务器本地无头 Chrome/Chromium 打开 URL 并提取页面标题与正文(适合 JS 渲染站点)。需在后台配置浏览器路径或设置 BROWSER_EXECUTABLE 环境变量。仅用于合法公开信息采集,勿抓取用户隐私或违反目标站条款。',
         parameters: Type.Object({
           url: Type.String({ description: '要打开的 https 页面 URL(必填)' }),
           max_chars: Type.Optional(Type.Number({ description: '返回正文最大字符数,默认 12000' })),
