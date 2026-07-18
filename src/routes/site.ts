@@ -268,7 +268,7 @@ ${headExtra}
 <body>
 <header class="site-header">
   <a class="wordmark" href="/">${wordmarkLogo}<span class="wordmark-text">${esc(siteName)}</span></a>
-  <nav class="site-nav" aria-label="主导航">
+  <nav class="site-nav" id="siteNav" aria-label="主导航">
     <a href="/" ${active === 'home' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_home'))}</a>
     <a href="/news" ${active === 'news' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_news'))}</a>
     <a href="/products" ${active === 'products' ? 'aria-current="page"' : ''}>${esc(siteCopy(settings, 'nav_products'))}</a>
@@ -279,6 +279,10 @@ ${headExtra}
     <button class="theme-toggle" id="themeToggle" type="button" aria-label="切换主题" title="切换主题">
       <svg class="icon-sun" hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
       <svg class="icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
+    <button class="nav-toggle" id="navToggle" type="button" aria-label="打开菜单" aria-expanded="false" aria-controls="siteNav">
+      <svg class="icon-menu" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      <svg class="icon-close" hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
   </div>
 </header>

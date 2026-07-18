@@ -25,3 +25,35 @@
     syncIcon();
   });
 })();
+
+/* 移动端导航菜单 */
+(() => {
+  'use strict';
+  const btn = document.getElementById('navToggle');
+  const nav = document.getElementById('siteNav');
+  if (!btn || !nav) return;
+
+  function setOpen(open) {
+    nav.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', String(open));
+    btn.setAttribute('aria-label', open ? '关闭菜单' : '打开菜单');
+    btn.querySelector('.icon-menu')?.toggleAttribute('hidden', open);
+    btn.querySelector('.icon-close')?.toggleAttribute('hidden', !open);
+  }
+
+  btn.addEventListener('click', () => setOpen(!nav.classList.contains('open')));
+  nav.addEventListener('click', (e) => {
+    if (e.target.closest('a')) setOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOpen(false);
+  });
+  document.addEventListener('click', (e) => {
+    if (!nav.classList.contains('open')) return;
+    if (e.target.closest('#siteNav') || e.target.closest('#navToggle')) return;
+    setOpen(false);
+  });
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 880) setOpen(false);
+  });
+})();
