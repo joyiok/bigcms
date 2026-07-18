@@ -78,12 +78,12 @@ function renderBrandShowcase(): string {
     ['/brand/notebook_mockup.png', '品牌笔记本应用'],
     ['/brand/totebag_mockup.png', '品牌帆布袋应用'],
   ];
-  return `<section class="brand-showcase" aria-label="品牌应用展示">
+  return `<section class="brand-showcase" aria-label="企业文化展示">
   <div class="section">
     <div class="section-head">
       <div>
         <p class="section-tag">Brand Applications</p>
-        <h2 class="section-title">品牌应用展示</h2>
+        <h2 class="section-title">企业文化展示</h2>
       </div>
     </div>
     <div class="brand-mockup-grid">
@@ -420,8 +420,9 @@ ${aboutTitle || aboutText ? `
       <a class="btn-primary" href="/contact">${esc(siteCopy(settings, 'nav_contact'))}</a>
     </div>
     ${aboutText ? `<div class="home-about-body"><p>${esc(aboutText)}</p></div>` : ''}
-    <div class="home-about-visual">
-      <img src="/brand/card_front_dark.svg" alt="QIpeak 品牌名片" loading="lazy" width="1134" height="709">
+    <div class="home-about-visual home-about-contact">
+      <span class="home-about-contact-label">业务团队</span>
+      <a class="home-about-contact-mail" href="mailto:svs@qipeak.com">svs@qipeak.com</a>
     </div>
   </div>
 </section>` : ''}
